@@ -1,0 +1,52 @@
+cabal-version:      2.4
+name:               example
+version:            0.1.0.0
+build-type:         Custom
+
+common compile-options
+    default-language: Haskell2010
+    ghc-options:    -Weverything
+                    -Wno-implicit-prelude
+                    -Wno-missing-deriving-strategies
+                    -Wno-missing-exported-signatures
+                    -Wno-missing-import-lists
+                    -Wno-missing-local-signatures
+                    -Wno-missing-safe-haskell-mode
+                    -Wno-missed-specialisations
+                    -Wno-all-missed-specialisations
+                    -Wno-monomorphism-restriction
+                    -Wno-prepositive-qualified-module
+                    -Wno-unsafe
+                    -Rghc-timing
+
+    if impl(ghc >= 9.2)
+      ghc-options:
+        -Wno-missing-kind-signatures
+        -Wno-redundant-bang-patterns
+        -Wno-operator-whitespace
+
+common default-extensions
+    default-extensions: TemplateHaskell
+                      , QuasiQuotes
+                      , ScopedTypeVariables
+                      , TupleSections
+                      , KindSignatures
+
+common lib-options
+    import: compile-options,  default-extensions
+
+custom-setup
+  setup-depends:
+      base
+    , Cabal
+    , simple-rpc-setup
+
+executable example
+  import: lib-options
+  main-is: Main.hs
+  other-modules: Module1
+               , Module2
+  build-depends: base
+               , simple-rpc
+  hs-source-dirs: app
+  default-language: Haskell2010

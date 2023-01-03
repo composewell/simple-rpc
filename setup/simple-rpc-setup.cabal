@@ -1,0 +1,47 @@
+cabal-version:      2.4
+name:               simple-rpc-setup
+version:            0.1.0.0
+
+extra-source-files: CHANGELOG.md
+
+common compile-options
+    default-language: Haskell2010
+    ghc-options:    -Weverything
+                    -Wno-implicit-prelude
+                    -Wno-missing-deriving-strategies
+                    -Wno-missing-exported-signatures
+                    -Wno-missing-import-lists
+                    -Wno-missing-local-signatures
+                    -Wno-missing-safe-haskell-mode
+                    -Wno-missed-specialisations
+                    -Wno-all-missed-specialisations
+                    -Wno-monomorphism-restriction
+                    -Wno-prepositive-qualified-module
+                    -Wno-unsafe
+                    -Rghc-timing
+
+    if impl(ghc >= 9.2)
+      ghc-options:
+        -Wno-missing-kind-signatures
+        -Wno-redundant-bang-patterns
+        -Wno-operator-whitespace
+
+common default-extensions
+    default-extensions: TemplateHaskell
+                      , QuasiQuotes
+                      , ScopedTypeVariables
+                      , TupleSections
+
+common lib-options
+    import: compile-options,  default-extensions
+
+library
+    import: lib-options
+    exposed-modules: Simple.RPC.Setup
+    build-depends:    base
+                    , Cabal
+                    , streamly-core
+                    -- XXX This is a heavy dependency but this brings us a lot
+                    -- of convinence.
+                    , ghc-lib-parser
+    hs-source-dirs:   lib
