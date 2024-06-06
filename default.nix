@@ -42,6 +42,14 @@ let
                             doHaddock = false;
                           });
 
+                    simple-rpc-generate =
+                      pkgs.haskell.lib.overrideCabal
+                        (mkPackage super "simple-rpc-generate" ./generate/. flags inShell)
+                        (old:
+                          { enableLibraryProfiling = false;
+                            doHaddock = false;
+                          });
+
                     simple-rpc =
                       pkgs.haskell.lib.overrideCabal
                         (mkPackage super "simple-rpc" ./rpc/. flags inShell)
@@ -144,6 +152,7 @@ let
         packages = p:
           [ p.simple-rpc
             p.simple-rpc-setup
+            p.simple-rpc-generate
             p.example
           ];
         doBenchmark = true;
