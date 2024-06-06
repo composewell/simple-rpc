@@ -42,7 +42,7 @@ library
                    , Module3
                    , Module4
     build-depends: base
-    hs-source-dirs: app
+    hs-source-dirs: lib
 
 -- <rpc-client>
 -- </rpc-client>
