@@ -1,0 +1,16 @@
+{
+    "cabalFile": "example.cabal",
+    "libraryRelativeToCabal": "lib",
+    "libraryName": "example",
+    "rpcModulePrefix": "RPC",
+    "serverDirectoryRelativeToCabal": "app",
+    "serverExecutableName": "example-exe",
+    "serverConfigImportList": ["lib-options"],
+    "serverVersion": "0.0.0",
+    "rpcModuleList": {
+        "Module1": ["printFromModule1"],
+        "Module2": ["printFromModule2"],
+        "Module3": ["helloWorld", "bottom"],
+        "Module4": ["top"]
+    }
+}
