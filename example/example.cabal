@@ -1,7 +1,6 @@
 cabal-version:      2.4
 name:               example
 version:            0.1.0.0
-build-type:         Custom
 
 common compile-options
     default-language: Haskell2010
@@ -35,18 +34,18 @@ common default-extensions
 common lib-options
     import: compile-options,  default-extensions
 
-custom-setup
-  setup-depends:
-      base
-    , Cabal
-    , simple-rpc-setup
+library
+    import: lib-options
+    exposed-modules: Module0
+                   , Module1
+                   , Module2
+                   , Module3
+                   , Module4
+    build-depends: base
+    hs-source-dirs: app
 
-executable example
-  import: lib-options
-  main-is: Main.hs
-  other-modules: Module1
-               , Module2
-  build-depends: base
-               , simple-rpc
-  hs-source-dirs: app
-  default-language: Haskell2010
+-- <rpc-client>
+-- </rpc-client>
+
+-- <rpc-server>
+-- </rpc-server>
