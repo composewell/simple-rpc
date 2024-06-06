@@ -1,1 +1,1 @@
-packages: setup, rpc, example
+packages: setup, rpc, example, generate
