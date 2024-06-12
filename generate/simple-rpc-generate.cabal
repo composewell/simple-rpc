@@ -42,4 +42,5 @@ executable simple-rpc-generate
                  , filepath
                  , text
                  , aeson
+                 , streamly-coreutils
     default-language: Haskell2010
