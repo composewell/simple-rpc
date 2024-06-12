@@ -47,4 +47,18 @@ library
     hs-source-dirs: lib
 
 -- <rpc-server>
+-- Warning: The section between <rpc-server> and </rpc-server> is managed by the rpc
+-- generator. Do not edit this by hand.
+
+executable example-server
+    import:
+        lib-options
+    main-is: Main.hs
+    build-depends:
+        base
+      , simple-rpc
+      , example
+    hs-source-dirs: app
+    default-language: Haskell2010
+
 -- </rpc-server>
