@@ -1,16 +1,10 @@
 {
+    "distBuildDir": "../dist-newstyle/build/x86_64-linux/ghc-9.2.2/example-0.1.0.0/build/",
+    "sourceDirectories": ["lib"],
     "cabalFile": "example.cabal",
-    "libraryRelativeToCabal": "lib",
     "libraryName": "example",
-    "rpcModulePrefix": "RPC",
-    "serverDirectoryRelativeToCabal": "app",
-    "serverExecutableName": "example-exe",
+    "serverDirectory": "app",
+    "serverExecutableName": "example-server",
     "serverConfigImportList": ["lib-options"],
-    "serverVersion": "0.0.0",
-    "rpcModuleList": {
-        "Module1": ["printFromModule1"],
-        "Module2": ["printFromModule2"],
-        "Module3": ["helloWorld", "bottom"],
-        "Module4": ["top"]
-    }
+    "serverVersion": "0.0.0"
 }
