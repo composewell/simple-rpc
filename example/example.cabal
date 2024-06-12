@@ -36,40 +36,15 @@ common lib-options
 
 library
     import: lib-options
+    ghc-options: -ddump-to-file -dth-dec-file
     exposed-modules: Module0
                    , Module1
                    , Module2
                    , Module3
                    , Module4
     build-depends: base
+                 , simple-rpc
     hs-source-dirs: lib
 
--- <rpc-client>
--- Warning: The section between <rpc-client> and </rpc-client> is managed by the rpc
--- generator. Do not edit this by hand.
-
-    exposed-modules:
-        RPC.Module1
-      , RPC.Module2
-      , RPC.Module3
-      , RPC.Module4
-    build-depends: simple-rpc
-
--- </rpc-client>
-
 -- <rpc-server>
--- Warning: The section between <rpc-server> and </rpc-server> is managed by the rpc
--- generator. Do not edit this by hand.
-
-executable example-server
-    import:
-        lib-options
-    main-is: Main.hs
-    build-depends:
-        base
-      , simple-rpc
-      , example
-    hs-source-dirs: app
-    default-language: Haskell2010
-
 -- </rpc-server>

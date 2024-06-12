@@ -6,19 +6,20 @@ module Module3
 import Data.Function ((&))
 import System.Environment (getExecutablePath)
 
-import qualified RPC.Module1 as Module1
-import qualified RPC.Module2 as Module2
+import qualified Module1 as Module1
+import qualified Module2 as Module2
 
 import Module0
 import Simple.RPC.Client
 import Simple.RPC.Server
 
-helloWorld :: IO ()
-helloWorld = do
+raw_helloWorld :: IO ()
+raw_helloWorld = do
     putStr "Hello, World"
+$(rpcExport "raw_helloWorld" "helloWorld")
 
-bottom :: IO ()
-bottom = do
+raw_bottom :: IO ()
+raw_bottom = do
     exePath <- getExecutablePath
     let exe = Executable exePath exeVersion
     val <-
@@ -29,3 +30,4 @@ bottom = do
     call
         Module2.printFromModule2
         (with (exec remoteExe & onSSH localhost))  "World"
+$(rpcExport "raw_bottom" "bottom")
