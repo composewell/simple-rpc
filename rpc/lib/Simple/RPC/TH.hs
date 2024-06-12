@@ -107,6 +107,7 @@ rpcExport oldFuncName newFuncName = do
                   $(varE n_raw) $(runningExp)
                   (RpcEval $(stringE endpointWithMod) $(evalExp))|]
 
+    prag <- pragAnnD (ValueAnnotation n_endpoint) [|"RPC"|]
     sig <- sigD n_endpoint [t|RpcSymbol IntermediateRep $(pure typ)|]
     def <- funD n_endpoint [ clause [] (normalB rpcSymbolExp) [] ]
-    pure [sig, def]
+    pure [prag, sig, def]
