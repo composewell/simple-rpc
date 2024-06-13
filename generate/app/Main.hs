@@ -97,9 +97,14 @@ getRpcModuleList Config{..} = do
 
     where
 
+    isThHsFile fp =
+        let len = length fp
+         in drop (len - 6) fp == ".th.hs"
+
     exploreDir dir =
         Ls.ls (Ls.recursive On) dir
             & Stream.catRights
+            & Stream.filter isThHsFile
             & Stream.mapM (parseTargetFile dir)
 
 parseTargetFile :: FilePath -> FilePath -> IO RpcModule
