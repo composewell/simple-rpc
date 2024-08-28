@@ -44,7 +44,7 @@ import Simple.RPC.Types
 
 withLog :: (String -> IO a) -> String -> IO a
 withLog f cmd = do
-    putStrLn cmd
+    putStrLn $ ">> " ++ cmd
     f cmd
 
 versionGuard :: Maybe SSHConfig -> Executable -> IO ()
@@ -134,11 +134,11 @@ installOnRemote localExe sshConf@(addr, port) remoteExePath = do
     let exePath = executablePath localExe
         remoteExeDir = takeDirectory remoteExePath
     versionGuard Nothing localExe
-    Cmd.toStdout $ mkSSHCmd sshConf [str|sudo mkdir -p #{remoteExeDir}|]
-    Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+rw #{remoteExeDir}|]
-    Cmd.toStdout [str|scp -P #{port} #{exePath} #{addr}:#{remoteExePath}|]
-    Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+r #{remoteExeDir}|]
-    Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+x #{remoteExePath}|]
+    withLog Cmd.toStdout $ mkSSHCmd sshConf [str|sudo mkdir -p #{remoteExeDir}|]
+    withLog Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+rw #{remoteExeDir}|]
+    withLog Cmd.toStdout [str|scp -P #{port} #{exePath} #{addr}:#{remoteExePath}|]
+    withLog Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+r #{remoteExeDir}|]
+    withLog Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+x #{remoteExePath}|]
 
     where
 
