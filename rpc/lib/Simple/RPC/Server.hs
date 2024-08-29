@@ -54,7 +54,7 @@ mainWith version actions = do
                         & Unicode.decodeUtf8'
                         & Stream.fold (Fold.takeEndBy_ (== '\n') Fold.toList)
                 let input = irFromString inputString
-                putStrLn [str|Executing: #{actName} #{inputString}|]
+                putStrLn [str|[RPC] #{actName} #{inputString}|]
                 output <- actFun input
                 putStrLn ""
                 toBinStream output & Stream.fold (FH.write stdout)
