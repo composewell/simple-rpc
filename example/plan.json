@@ -1,0 +1,16 @@
+[
+  {
+    "config": {
+      "executable": {
+        "path": "./example-server",
+        "version": "0.0.0"
+      }
+    },
+    "actions": [
+      {
+        "endpoint": "Module1.printFromModule1",
+        "arguments": [ 10, "World", true ]
+      }
+    ]
+  }
+]

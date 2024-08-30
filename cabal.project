@@ -1,4 +1,4 @@
-packages: setup, rpc, example, generate
+packages: setup, rpc, example, generate, evaluate
 
 source-repository-package
    type: git
