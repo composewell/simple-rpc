@@ -18,6 +18,9 @@ module Simple.RPC.Types
     , fromBinStream
     , irFromString
 
+      -- Printing helper
+    , printWith
+
       -- Rpc
     , Runner
     , RpcEval(..)
@@ -107,6 +110,9 @@ asUser x rc = rc { rcUser = Just x }
 --------------------------------------------------------------------------------
 -- Utils
 --------------------------------------------------------------------------------
+
+printWith :: String -> String -> IO ()
+printWith tag val = putStrLn $ "[" ++ tag ++ "] " ++ val
 
 toIntermediateRep :: ToJSON a => a -> IntermediateRep
 toIntermediateRep = toJSON

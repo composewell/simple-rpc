@@ -44,7 +44,7 @@ import Simple.RPC.Types
 
 withLog :: (String -> IO a) -> String -> IO a
 withLog f cmd = do
-    putStrLn $ ">> " ++ cmd
+    printWith "CMD" cmd
     f cmd
 
 versionGuard :: Maybe SSHConfig -> Executable -> IO ()
@@ -62,20 +62,20 @@ versionGuard mSshConf exe = do
                 Nothing -> ""
                 Just (addr, port) -> [str|#{addr}:#{port}:|]
     when (not (exeVersion == exeVersionExpected)) $ do
-        putStrLn [str|Version mismatch for #{prefix}#{exePath}|]
-        putStrLn [str|Expected: #{exeVersionExpected}|]
-        putStrLn [str|Got: #{exeVersion}|]
+        printWith "ERR" [str|Version mismatch for #{prefix}#{exePath}|]
+        printWith "ERR" [str|Expected: #{exeVersionExpected}|]
+        printWith "ERR" [str|Got: #{exeVersion}|]
         error "VersionMismatch"
 
 tracing :: String -> IO String
-tracing val = putStrLn val >> pure val
+tracing val = printWith "TRACING" val >> pure val
 
 with :: RunningConfig -> Runner IntermediateRep
 with (RunningConfig{..}) actionName input = do
     versionGuard rcSSH rcExe
     let cmd = sshWrapper rcSSH (userWrapper rcUser (exeAction rcExe))
     toBinStream input & Stream.fold (FH.write stdout)
-    putStrLn cmd
+    printWith "PIPING" cmd
     res <-
         toBinStream input & Cmd.pipeBytes cmd & Unicode.decodeUtf8
             & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
