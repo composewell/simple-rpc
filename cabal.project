@@ -3,4 +3,4 @@ packages: setup, rpc, example, generate, evaluate
 source-repository-package
    type: git
    location: https://github.com/composewell/streamly-coreutils.git
-   tag: master
+   tag: 1e7c5231c15dcd67f2ef03ca5726c14292de8fa7
