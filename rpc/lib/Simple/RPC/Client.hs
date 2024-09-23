@@ -25,12 +25,15 @@ module Simple.RPC.Client
 
 import System.IO (stdout)
 import System.IO.Unsafe (unsafePerformIO)
+import Control.Exception (SomeException, throwIO, try)
 import Control.Monad (when)
 import Data.Function ((&))
 import Data.Word (Word8)
 import Streamly.Internal.Unicode.String (str)
 import System.FilePath (takeDirectory)
+import Streamly.Data.Array (Array)
 
+import qualified Data.IORef as IORef
 import qualified Streamly.Data.Stream as Stream
 import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.FileSystem.Handle as FH hiding (read)
@@ -44,9 +47,11 @@ import Simple.RPC.Types
 -- Utils
 --------------------------------------------------------------------------------
 
-pipeBytesEither
-    :: String -> Stream.Stream IO Word8 -> Stream.Stream IO (Either Word8 Word8)
-pipeBytesEither = Cmd.pipeWith Proc.pipeBytesEither
+pipeChunksEither
+    :: String
+    -> Stream.Stream IO (Array Word8)
+    -> Stream.Stream IO (Either (Array Word8) (Array Word8))
+pipeChunksEither = Cmd.pipeWith Proc.pipeChunksEither
 
 withLog :: (String -> IO a) -> String -> IO a
 withLog f cmd = do
@@ -89,21 +94,30 @@ with (RunningConfig{..}) actionName input = do
 
     printWith "RUNNING" cmd
 
-    buffer <- toBinStream input & pipeBytesEither cmd & Stream.toList
+    ref <- IORef.newIORef []
+    actionRes <- try $
+        toChunkStream input
+            & pipeChunksEither cmd
+            & Stream.fold (Fold.drainMapM (\c -> IORef.modifyIORef ref (c:)))
+
+    chunkBufferReversed <- IORef.readIORef ref
+    let buffer = reverse chunkBufferReversed
 
     let outStream = buffer & Stream.fromList & Stream.catRights
         errStream = buffer & Stream.fromList & Stream.catLefts
 
-
     res <-
-        outStream & Unicode.decodeUtf8
+        outStream & Unicode.decodeUtf8Chunks
            & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
            & Stream.fold (Fold.lmapM (tracing "STDOUT") Fold.latest)
 
-    errStream & Unicode.decodeUtf8
+    errStream & Unicode.decodeUtf8Chunks
        & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
        & Stream.fold (Fold.drainMapM (tracing "STDERR"))
 
+    case actionRes of
+        Left (err :: SomeException) -> throwIO err
+        Right _ -> pure ()
 
     case res of
         Nothing -> error "No output recieved"

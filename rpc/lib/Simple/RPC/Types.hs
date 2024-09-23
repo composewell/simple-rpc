@@ -15,6 +15,7 @@ module Simple.RPC.Types
     , createObj
     , createArr
     , toBinStream
+    , toChunkStream
     , fromBinStream
     , irFromString
 
@@ -46,6 +47,7 @@ import Data.Word (Word8)
 import Streamly.Data.Stream (Stream)
 import Data.Vector ((!?))
 
+import qualified Streamly.Data.Array as Array
 import qualified Data.Vector as Vector
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Aeson.Key as Key
@@ -162,6 +164,12 @@ toBinStream input =
     where
     bsl = encode input
     len = BSL.length bsl
+
+-- XXX Convert Bytestring to Array directly
+toChunkStream :: IntermediateRep -> Stream IO (Array.Array Word8)
+toChunkStream input =
+    toBinStream input
+        & Stream.chunksOf 1024
 
 fromBinStream :: Stream IO Word8 -> IO IntermediateRep
 fromBinStream input = do
