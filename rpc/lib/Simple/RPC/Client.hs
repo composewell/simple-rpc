@@ -27,6 +27,7 @@ import System.IO (stdout)
 import System.IO.Unsafe (unsafePerformIO)
 import Control.Monad (when)
 import Data.Function ((&))
+import Data.Word (Word8)
 import Streamly.Internal.Unicode.String (str)
 import System.FilePath (takeDirectory)
 
@@ -35,12 +36,17 @@ import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.FileSystem.Handle as FH hiding (read)
 import qualified Streamly.Internal.Unicode.Stream as Unicode
 import qualified Streamly.Internal.System.Command as Cmd
+import qualified Streamly.Internal.System.Process as Proc
 
 import Simple.RPC.Types
 
 --------------------------------------------------------------------------------
 -- Utils
 --------------------------------------------------------------------------------
+
+pipeBytesEither
+    :: String -> Stream.Stream IO Word8 -> Stream.Stream IO (Either Word8 Word8)
+pipeBytesEither = Cmd.pipeWith Proc.pipeBytesEither
 
 withLog :: (String -> IO a) -> String -> IO a
 withLog f cmd = do
@@ -67,19 +73,38 @@ versionGuard mSshConf exe = do
         printWith "ERR" [str|Got: #{exeVersion}|]
         error "VersionMismatch"
 
-tracing :: String -> IO String
-tracing val = printWith "TRACING" val >> pure val
+tracing :: String -> String -> IO String
+tracing tag val = printWith tag val >> pure val
 
 with :: RunningConfig -> Runner IntermediateRep
 with (RunningConfig{..}) actionName input = do
     versionGuard rcSSH rcExe
     let cmd = sshWrapper rcSSH (userWrapper rcUser (exeAction rcExe))
+
+    printWith "ACTION" actionName
+
+    printTag "INPUT"
     toBinStream input & Stream.fold (FH.write stdout)
-    printWith "PIPING" cmd
+    putStrLn ""
+
+    printWith "RUNNING" cmd
+
+    buffer <- toBinStream input & pipeBytesEither cmd & Stream.toList
+
+    let outStream = buffer & Stream.fromList & Stream.catRights
+        errStream = buffer & Stream.fromList & Stream.catLefts
+
+
     res <-
-        toBinStream input & Cmd.pipeBytes cmd & Unicode.decodeUtf8
-            & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
-            & Stream.fold (Fold.lmapM tracing Fold.latest)
+        outStream & Unicode.decodeUtf8
+           & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
+           & Stream.fold (Fold.lmapM (tracing "STDOUT") Fold.latest)
+
+    errStream & Unicode.decodeUtf8
+       & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
+       & Stream.fold (Fold.drainMapM (tracing "STDERR"))
+
+
     case res of
         Nothing -> error "No output recieved"
         Just val -> pure $ irFromString val

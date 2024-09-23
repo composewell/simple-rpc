@@ -19,6 +19,7 @@ module Simple.RPC.Types
     , irFromString
 
       -- Printing helper
+    , printTag
     , printWith
 
       -- Rpc
@@ -110,6 +111,9 @@ asUser x rc = rc { rcUser = Just x }
 --------------------------------------------------------------------------------
 -- Utils
 --------------------------------------------------------------------------------
+
+printTag :: String -> IO ()
+printTag tag = putStr $ "[" ++ tag ++ "] "
 
 printWith :: String -> String -> IO ()
 printWith tag val = putStrLn $ "[" ++ tag ++ "] " ++ val
