@@ -115,6 +115,7 @@ parseTargetFile dirPrefix fp = do
             & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
             & Stream.mapM (Stream.parse pragmaParser . Stream.fromList)
             & Stream.catRights
+            & Stream.nub
             & Stream.toList
     pure $ RpcModule moduleName fList
 
