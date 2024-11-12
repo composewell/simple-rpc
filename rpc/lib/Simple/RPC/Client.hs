@@ -81,47 +81,48 @@ versionGuard mSshConf exe = do
 tracing :: String -> String -> IO String
 tracing tag val = printWith tag val >> pure val
 
+bufferLefts
+    :: IORef.IORef [a] -> Stream.Stream IO (Either a b) -> Stream.Stream IO b
+bufferLefts ref inp =
+    Stream.mapM f inp & Stream.catMaybes
+    where
+    f (Left a) = IORef.modifyIORef ref (a:) >> pure Nothing
+    f (Right b) = pure $ Just b
+
 with :: RunningConfig -> Runner IntermediateRep
 with (RunningConfig{..}) actionName input = do
     versionGuard rcSSH rcExe
     let cmd = sshWrapper rcSSH (userWrapper rcUser (exeAction rcExe))
 
-    printWith "ACTION" actionName
+    printWith "ACT" actionName
 
-    printTag "INPUT"
+    printTag "INP"
     toBinStream input & Stream.fold (FH.write stdout)
     putStrLn ""
 
-    printWith "RUNNING" cmd
+    printWith "RUN" cmd
 
-    ref <- IORef.newIORef []
+    errRef <- IORef.newIORef []
+
     actionRes <- try $
         toChunkStream input
             & pipeChunksEither cmd
-            & Stream.fold (Fold.drainMapM (\c -> IORef.modifyIORef ref (c:)))
+            & bufferLefts errRef
+            & Unicode.decodeUtf8Chunks
+            & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
+            & Stream.fold (Fold.lmapM (tracing "STDOUT") Fold.latest)
 
-    chunkBufferReversed <- IORef.readIORef ref
-    let buffer = reverse chunkBufferReversed
-
-    let outStream = buffer & Stream.fromList & Stream.catRights
-        errStream = buffer & Stream.fromList & Stream.catLefts
-
-    res <-
-        outStream & Unicode.decodeUtf8Chunks
-           & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
-           & Stream.fold (Fold.lmapM (tracing "STDOUT") Fold.latest)
+    chunkBufferReversed <- IORef.readIORef errRef
+    let errBuffer = reverse chunkBufferReversed
+    let errStream = errBuffer & Stream.fromList
 
     errStream & Unicode.decodeUtf8Chunks
        & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
        & Stream.fold (Fold.drainMapM (tracing "STDERR"))
-
     case actionRes of
         Left (err :: SomeException) -> throwIO err
-        Right _ -> pure ()
-
-    case res of
-        Nothing -> error "No output recieved"
-        Just val -> pure $ irFromString val
+        Right Nothing -> error "No output recieved"
+        Right (Just val) -> pure $ irFromString val
 
     where
 
