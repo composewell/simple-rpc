@@ -193,7 +193,10 @@ generateServer conf@Config{..} = do
             )
 
     docImportList docList =
-        vsep $ pretty "import Simple.RPC.Server" : map fst docList
+        vsep
+            $ pretty "import Simple.RPC.Server"
+                  : pretty "import qualified System.IO as SIO"
+                  : map fst docList
     docEvalList docList =
         let evalList = concat $ map snd docList
             pre = "[ " : replicate (length evalList - 1) ", "
@@ -204,9 +207,11 @@ generateServer conf@Config{..} = do
 
     docMainDef docList =
         [ pretty "main :: IO ()"
-        , pretty "main ="
+        , pretty "main = do"
         , indent 4 $ vsep
-              [ pretty [str|mainWith "#{serverVersion}"|]
+              [ pretty "SIO.hSetBuffering SIO.stdout SIO.LineBuffering"
+              , pretty "SIO.hSetBuffering SIO.stderr SIO.LineBuffering"
+              , pretty [str|mainWith "#{serverVersion}"|]
               , indent 4 $ docEvalList docList
               ]
         ]
