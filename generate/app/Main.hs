@@ -5,7 +5,7 @@ module Main (main) where
 --------------------------------------------------------------------------------
 
 import Data.Function ((&))
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromJust, fromMaybe)
 import Streamly.Unicode.String (str)
 import System.FilePath ((</>))
 import Data.Functor.Identity (runIdentity)
@@ -13,6 +13,7 @@ import Data.Functor.Identity (runIdentity)
 import qualified Streamly.Internal.Data.Parser as Parser
 import qualified Streamly.Internal.Data.Stream as Stream
 import qualified Streamly.FileSystem.File as File
+import qualified Streamly.Internal.FileSystem.Path as Path
 import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Internal.System.Command as Cmd
 import qualified Streamly.Unicode.Stream as Unicode
@@ -101,9 +102,11 @@ getRpcModuleList Config{..} = do
         let len = length fp
          in drop (len - 6) fp == ".th.hs"
 
+    -- XXX Use Path instead of String
     exploreDir dir =
-        Ls.ls (Ls.recursive On) dir
+        Ls.ls (Ls.recursive On) (fromJust $ Path.fromString dir)
             & Stream.catRights
+            & fmap Path.toString
             & Stream.filter isThHsFile
             & Stream.mapM (parseTargetFile dir)
 
@@ -115,7 +118,7 @@ parseTargetFile dirPrefix fp = do
             & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
             & Stream.mapM (Stream.parse pragmaParser . Stream.fromList)
             & Stream.catRights
-            & Stream.nub
+            & Stream.ordNub
             & Stream.toList
     pure $ RpcModule moduleName fList
 
