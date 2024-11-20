@@ -1,4 +1,4 @@
-module Module0 where
+module Module0 (exeVersion, remoteExe, localhost) where
 
 import Simple.RPC.Client
 
