@@ -100,7 +100,9 @@ getRpcModuleList Config{..} = do
 
     isThHsFile fp =
         let len = length fp
-         in drop (len - 6) fp == ".th.hs"
+            thHsSuffix = drop (len - 6) fp
+            dynThHsSuffix = drop (len - 10) fp
+         in thHsSuffix == ".th.hs" && dynThHsSuffix /= ".dyn.th.hs"
 
     -- XXX Use Path instead of String
     exploreDir dir =
