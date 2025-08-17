@@ -7,6 +7,7 @@ module Simple.RPC.Client
     , SSHConfig
     , Username
     , with
+    , pipe
     , asUser
     , onSSH
     , exec
