@@ -24,6 +24,7 @@ module Simple.RPC.Types
     , printWith
 
       -- Rpc
+    , Pipe
     , Runner
     , RpcEval(..)
     , RpcSymbol(..)
@@ -62,6 +63,11 @@ import Data.Aeson
 --------------------------------------------------------------------------------
 
 type IntermediateRep = Value
+
+type Pipe =
+    String ->
+    Stream IO (Array.Array Word8) ->
+    Stream IO (Either (Array.Array Word8) (Array.Array Word8))
 
 type Runner ir = String -> ir -> IO ir
 

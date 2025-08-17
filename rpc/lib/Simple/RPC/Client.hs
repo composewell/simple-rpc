@@ -25,7 +25,7 @@ module Simple.RPC.Client
 
 import System.IO (stdout)
 import System.IO.Unsafe (unsafePerformIO)
-import Control.Exception (SomeException, throwIO, try)
+import Control.Exception (SomeException, throwIO, try, Exception)
 import Control.Monad (when)
 import Data.Function ((&))
 import Data.Word (Word8)
@@ -89,24 +89,24 @@ bufferLefts ref inp =
     f (Left a) = IORef.modifyIORef ref (a:) >> pure Nothing
     f (Right b) = pure $ Just b
 
-with :: RunningConfig -> Runner IntermediateRep
-with (RunningConfig{..}) actionName input = do
-    versionGuard rcSSH rcExe
-    let cmd = sshWrapper rcSSH (userWrapper rcUser (exeAction rcExe))
+data RpcException = EmptyOutput
+    deriving (Show)
 
+instance Exception RpcException
+
+pipe :: Pipe -> Runner IntermediateRep
+pipe using actionName input = do
     printWith "ACT" actionName
 
     printTag "INP"
     toBinStream input & Stream.fold (FH.write stdout)
     putStrLn ""
 
-    printWith "RUN" cmd
-
     errRef <- IORef.newIORef []
 
     actionRes <- try $
         toChunkStream input
-            & pipeChunksEither cmd
+            & using actionName
             & bufferLefts errRef
             & Unicode.decodeUtf8Chunks
             & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
@@ -121,11 +121,17 @@ with (RunningConfig{..}) actionName input = do
        & Stream.fold (Fold.drainMapM (tracing "STDERR"))
     case actionRes of
         Left (err :: SomeException) -> throwIO err
-        Right Nothing -> error "No output recieved"
+        Right Nothing -> throwIO EmptyOutput
         Right (Just val) -> pure $ irFromString val
 
-    where
+with :: RunningConfig -> Runner IntermediateRep
+with (RunningConfig{..}) actionName input = do
+    versionGuard rcSSH rcExe
+    let cmd = sshWrapper rcSSH (userWrapper rcUser (exeAction rcExe))
+    printWith "RUN" cmd
+    pipe pipeChunksEither actionName input
 
+    where
     sshWrapper Nothing val = val
     sshWrapper (Just (addr, port)) val =
         let quotedVal = show val
@@ -169,6 +175,7 @@ runAs exe uname = with (exec exe & asUser uname)
 runAtAs :: Executable -> SSHConfig -> Username -> Runner IntermediateRep
 runAtAs exe sshConf uname = with (exec exe & onSSH sshConf & asUser uname)
 
+-- NOTE: This should be removed from here. Leave the installation to the user.
 installOnRemote :: Executable -> SSHConfig -> FilePath -> IO ()
 installOnRemote localExe sshConf@(addr, port) remoteExePath = do
     let exePath = executablePath localExe
