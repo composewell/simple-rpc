@@ -6,6 +6,7 @@ module Main (main) where
 -- Imports
 --------------------------------------------------------------------------------
 
+import Simple.RPC.Types
 import Simple.RPC.Server
 import qualified Module4 as Module0
 import qualified Module3 as Module1
@@ -18,7 +19,7 @@ import qualified Module1 as Module3
 
 main :: IO ()
 main =
-    mainWith "0.0.0"
+    mainWith "0.0.0" $ createRpcMap
         [ evaluator Module0.top
         , evaluator Module1.helloWorld
         , evaluator Module1.bottom

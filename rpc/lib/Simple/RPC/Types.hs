@@ -18,6 +18,9 @@ module Simple.RPC.Types
     , toChunkStream
     , fromBinStream
     , irFromString
+    , RpcMap
+    , createRpcMap
+    , lookupRpcSymbol
 
       -- Printing helper
     , printTag
@@ -48,6 +51,7 @@ import Data.Word (Word8)
 import Streamly.Data.Stream (Stream)
 import Data.Vector ((!?))
 
+import qualified Data.HashMap.Strict as HM
 import qualified Streamly.Data.Array as Array
 import qualified Data.Vector as Vector
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -63,6 +67,8 @@ import Data.Aeson
 --------------------------------------------------------------------------------
 
 type IntermediateRep = Value
+
+type RpcMap ir = HM.HashMap String (ir -> IO ir)
 
 type Pipe =
     String ->
@@ -119,6 +125,12 @@ asUser x rc = rc { rcUser = Just x }
 --------------------------------------------------------------------------------
 -- Utils
 --------------------------------------------------------------------------------
+
+createRpcMap :: [RpcEval ir] -> RpcMap ir
+createRpcMap = HM.fromList . map (\x -> (symbol x, eval x))
+
+lookupRpcSymbol :: String -> RpcMap ir -> Maybe (ir -> IO ir)
+lookupRpcSymbol = HM.lookup
 
 printTag :: String -> IO ()
 printTag tag = putStr $ "[" ++ tag ++ "] "
