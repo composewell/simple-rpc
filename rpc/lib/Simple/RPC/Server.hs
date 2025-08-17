@@ -18,7 +18,6 @@ module Simple.RPC.Server
 
 import System.IO (stdout, stdin)
 import Data.Function ((&))
-import Data.List (find)
 import System.Environment (getArgs)
 import Streamly.Internal.Unicode.String (str)
 
@@ -35,7 +34,7 @@ import Simple.RPC.Types
 -- Utils
 --------------------------------------------------------------------------------
 
-mainWith :: String -> [RpcEval IntermediateRep] -> IO ()
+mainWith :: String -> RpcMap IntermediateRep -> IO ()
 mainWith version actions = do
     args <- getArgs
     case args of
@@ -46,15 +45,15 @@ mainWith version actions = do
     where
 
     runner actionName =
-        case find ((== actionName) . symbol) actions of
+        case lookupRpcSymbol actionName actions of
             Nothing -> error [str|#{actionName} not found|]
-            Just (RpcEval actName actFun) -> do
+            Just actFun -> do
                 inputString <-
                     FH.read stdin
                         & Unicode.decodeUtf8'
                         & Stream.fold (Fold.takeEndBy_ (== '\n') Fold.toList)
                 let input = irFromString inputString
-                printWith "RPC" [str|#{actName} #{inputString}|]
+                printWith "RPC" [str|#{actionName} #{inputString}|]
                 output <- actFun input
                 putStrLn ""
                 toBinStream output & Stream.fold (FH.write stdout)
