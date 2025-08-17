@@ -171,11 +171,11 @@ toBinStream input =
     bsl = encode input
     len = BSL.length bsl
 
--- XXX Convert Bytestring to Array directly
+-- TODO: Convert Bytestring to Array directly
 toChunkStream :: IntermediateRep -> Stream IO (Array.Array Word8)
 toChunkStream input =
     toBinStream input
-        & Stream.chunksOf 1024
+        & Array.chunksOf 1024
 
 fromBinStream :: Stream IO Word8 -> IO IntermediateRep
 fromBinStream input = do
