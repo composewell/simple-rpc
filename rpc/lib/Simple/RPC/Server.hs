@@ -5,7 +5,7 @@ module Simple.RPC.Server
     (
     -- Rpc helpers
       rpcExport
-    , rpcExportLenient
+    , rpcify
     , RpcSymbol(..)
 
     -- Main function

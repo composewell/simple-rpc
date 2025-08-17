@@ -2,7 +2,7 @@
 
 module Simple.RPC.TH
     ( rpcExport
-    , rpcExportLenient
+    , rpcify
     ) where
 
 --------------------------------------------------------------------------------
@@ -11,7 +11,6 @@ module Simple.RPC.TH
 
 import Language.Haskell.TH
 import Simple.RPC.Types
-import Data.Aeson
 
 --------------------------------------------------------------------------------
 -- Functions
@@ -30,32 +29,6 @@ breakTypeOnArrow t = [t]
 
 getNumArgs :: Type -> Int
 getNumArgs typ = length (breakTypeOnArrow typ) - 1
-
-isRpcApplicable :: Type -> Q Bool
-isRpcApplicable typ = do
-    let components = breakTypeOnArrow typ
-        args = init components
-    case last components of
-        (AppT (ConT nm) result) ->  do
-            a <- fmap and $ mapM (isInstance ''FromJSON) $ map (:[]) args
-            b <- isInstance ''ToJSON [result]
-            let c = nm == ''IO
-            pure (a && b && c)
-        _ -> pure False
-
-rpcExportLenient :: String -> String -> Q [Dec]
-rpcExportLenient oldFuncName newFuncName = do
-    let endpoint = newFuncName
-        n_raw = mkName oldFuncName
-        n_endpoint = mkName endpoint
-    typ <- getFunctionType n_raw
-    isApplicable <- isRpcApplicable typ
-    if isApplicable
-    then rpcExport oldFuncName newFuncName
-    else do
-        sig <- sigD n_endpoint (pure typ)
-        def <- funD n_endpoint [ clause [] (normalB (varE n_raw)) [] ]
-        pure [sig, def]
 
 rpcExport :: String -> String -> Q [Dec]
 rpcExport oldFuncName newFuncName = do
@@ -111,3 +84,11 @@ rpcExport oldFuncName newFuncName = do
     sig <- sigD n_endpoint [t|RpcSymbol IntermediateRep $(pure typ)|]
     def <- funD n_endpoint [ clause [] (normalB rpcSymbolExp) [] ]
     pure [prag, sig, def]
+
+-- An opinionated rpc export
+rpcify :: Name -> Q [Dec]
+rpcify rawFuncName =
+    let raw = nameBase rawFuncName
+     in if last raw == '\''
+        then rpcExport raw (init raw)
+        else error "rpcify only works on function that ends with '"

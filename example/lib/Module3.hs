@@ -5,6 +5,7 @@ module Module3
 
 import Data.Function ((&))
 import System.Environment (getExecutablePath)
+import Simple.RPC.TH (rpcify)
 
 import qualified Module1 as Module1
 import qualified Module2 as Module2
@@ -13,10 +14,10 @@ import Module0
 import Simple.RPC.Client
 import Simple.RPC.Server
 
-raw_helloWorld :: IO ()
-raw_helloWorld = do
+helloWorld' :: IO ()
+helloWorld' = do
     putStr "Hello, World"
-$(rpcExport "raw_helloWorld" "helloWorld")
+$(rpcify 'helloWorld')
 
 raw_bottom :: IO ()
 raw_bottom = do

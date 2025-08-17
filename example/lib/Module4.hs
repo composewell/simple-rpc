@@ -9,11 +9,12 @@ import qualified Module2 as Module2
 import qualified Module3 as Module3
 
 import Module0
+import Simple.RPC.TH (rpcify)
 import Simple.RPC.Client
 import Simple.RPC.Server
 
-raw_top :: IO ()
-raw_top = do
+top' :: IO ()
+top' = do
     exePath <- getExecutablePath
     let exe = Executable exePath exeVersion
     run Module3.bottom
@@ -22,4 +23,4 @@ raw_top = do
     call Module2.printFromModule2
         (with (exec remoteExe & onSSH localhost & asUser "cw-portal"))
         "World"
-$(rpcExport "raw_top" "top")
+$(rpcify 'top')
