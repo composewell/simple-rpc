@@ -11,6 +11,7 @@ module Simple.RPC.Client
     , asUser
     , onSSH
     , exec
+    , sudo
 
     -- Backward compatibility
     , mkShCommand
@@ -128,7 +129,11 @@ pipe using actionName input = do
 with :: RunningConfig -> Runner IntermediateRep
 with (RunningConfig{..}) actionName input = do
     versionGuard rcSSH rcExe
-    let cmd = sshWrapper rcSSH (userWrapper rcUser (exeAction rcExe))
+    let cmd =
+              sshWrapper rcSSH
+            $ userWrapper rcUser
+            $ sudoWrapper rcSudo
+            $ exeAction rcExe
     printWith "RUN" cmd
     pipe pipeChunksEither cmd input
 
@@ -142,6 +147,9 @@ with (RunningConfig{..}) actionName input = do
     userWrapper (Just username) val =
         let quotedVal = show val
          in [str|sudo su #{username} -c #{quotedVal}|]
+
+    sudoWrapper False val = val
+    sudoWrapper True val = [str|sudo #{val}|]
 
     exeAction exeObj =
         let ePath = executablePath exeObj

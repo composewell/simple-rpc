@@ -39,7 +39,7 @@ instance FromJSON RunningConfig where
             ssh <- v .:? "ssh"
             user <- v .:? "username"
             exe <- v .: "executable"
-            pure $ RunningConfig (toSSHConfig <$> ssh) user exe
+            pure $ RunningConfig (toSSHConfig <$> ssh) user False exe
 
 data Action =
     Action

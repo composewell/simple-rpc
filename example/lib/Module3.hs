@@ -5,7 +5,6 @@ module Module3
 
 import Data.Function ((&))
 import System.Environment (getExecutablePath)
-import Simple.RPC.TH (rpcify)
 
 import qualified Module1 as Module1
 import qualified Module2 as Module2

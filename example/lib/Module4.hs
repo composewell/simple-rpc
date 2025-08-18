@@ -9,7 +9,6 @@ import qualified Module2 as Module2
 import qualified Module3 as Module3
 
 import Module0
-import Simple.RPC.TH (rpcify)
 import Simple.RPC.Client
 import Simple.RPC.Server
 
