@@ -130,7 +130,7 @@ with (RunningConfig{..}) actionName input = do
     versionGuard rcSSH rcExe
     let cmd = sshWrapper rcSSH (userWrapper rcUser (exeAction rcExe))
     printWith "RUN" cmd
-    pipe pipeChunksEither actionName input
+    pipe pipeChunksEither cmd input
 
     where
     sshWrapper Nothing val = val
