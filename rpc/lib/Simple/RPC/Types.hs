@@ -40,6 +40,7 @@ module Simple.RPC.Types
     , exec
     , onSSH
     , asUser
+    , sudo
     ) where
 
 --------------------------------------------------------------------------------
@@ -98,6 +99,7 @@ data RunningConfig =
     RunningConfig
         { rcSSH :: Maybe SSHConfig
         , rcUser :: Maybe Username
+        , rcSudo :: Bool
         , rcExe :: Executable
         }
 
@@ -114,13 +116,16 @@ data Executable =
 -- We've changed this from using to exec. haskell-src-exts fails to parse the
 -- keword "using". Did not explore this in depth.
 exec :: Executable -> RunningConfig
-exec x = RunningConfig Nothing Nothing x
+exec x = RunningConfig Nothing Nothing False x
 
 onSSH :: SSHConfig -> RunningConfig -> RunningConfig
 onSSH x rc = rc { rcSSH = Just x }
 
 asUser :: Username -> RunningConfig -> RunningConfig
 asUser x rc = rc { rcUser = Just x }
+
+sudo :: Bool -> RunningConfig -> RunningConfig
+sudo x rc = rc { rcSudo = x }
 
 --------------------------------------------------------------------------------
 -- Utils
