@@ -23,8 +23,8 @@ module Simple.RPC.Types
     , lookupRpcSymbol
 
       -- Printing helper
-    , printTag
-    , printWith
+    , showTag
+    , showPair
 
       -- Rpc
     , Pipe
@@ -62,6 +62,7 @@ import qualified Data.ByteString.Lazy.Char8 as BSLC
 import qualified Streamly.Data.Stream as Stream
 
 import Data.Aeson
+import Prelude hiding (putStrLn, print)
 
 --------------------------------------------------------------------------------
 -- Main types
@@ -137,11 +138,11 @@ createRpcMap = HM.fromList . map (\x -> (symbol x, eval x))
 lookupRpcSymbol :: String -> RpcMap ir -> Maybe (ir -> IO ir)
 lookupRpcSymbol = HM.lookup
 
-printTag :: String -> IO ()
-printTag tag = putStr $ "[" ++ tag ++ "] "
+showTag :: String -> String
+showTag tag = "[" ++ tag ++ "] "
 
-printWith :: String -> String -> IO ()
-printWith tag val = putStrLn $ "[" ++ tag ++ "] " ++ val
+showPair :: String -> String -> String
+showPair tag val = showTag tag ++ " " ++ val
 
 toIntermediateRep :: ToJSON a => a -> IntermediateRep
 toIntermediateRep = toJSON
