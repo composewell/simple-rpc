@@ -6,8 +6,9 @@ module Simple.RPC.Client
       Executable(..)
     , SSHConfig
     , Username
-    , with
     , pipe
+    , withH
+    , with
     , asUser
     , onSSH
     , exec
@@ -25,7 +26,7 @@ module Simple.RPC.Client
 -- Imports
 --------------------------------------------------------------------------------
 
-import System.IO (stdout)
+import System.IO (stdout, Handle, hPutStrLn)
 import System.IO.Unsafe (unsafePerformIO)
 import Control.Exception (SomeException, throwIO, try, Exception)
 import Control.Monad (when)
@@ -44,6 +45,7 @@ import qualified Streamly.Internal.System.Command as Cmd
 import qualified Streamly.Internal.System.Process as Proc
 
 import Simple.RPC.Types
+import Prelude hiding (putStrLn, print)
 
 --------------------------------------------------------------------------------
 -- Utils
@@ -55,13 +57,8 @@ pipeChunksEither
     -> Stream.Stream IO (Either (Array Word8) (Array Word8))
 pipeChunksEither = Cmd.pipeWith Proc.pipeChunksEither
 
-withLog :: (String -> IO a) -> String -> IO a
-withLog f cmd = do
-    printWith "CMD" cmd
-    f cmd
-
-versionGuard :: Maybe SSHConfig -> Executable -> IO ()
-versionGuard mSshConf exe = do
+versionGuard :: Handle -> Maybe SSHConfig -> Executable -> IO ()
+versionGuard outH mSshConf exe = do
     let exePath = executablePath exe
         exeVersionExpected = executableVersion exe
     let cmdVersionCheck =
@@ -69,19 +66,20 @@ versionGuard mSshConf exe = do
                 Nothing -> [str|#{exePath}|]
                 Just (addr, port) ->
                     [str|ssh -T -p #{port} -o "StrictHostKeyChecking off" #{addr} #{exePath}|]
-    exeVersion <- withLog Cmd.toString cmdVersionCheck
+    hPutStrLn outH $ showPair "CMD" cmdVersionCheck
+    exeVersion <- Cmd.toString cmdVersionCheck
     let prefix =
             case mSshConf of
                 Nothing -> ""
                 Just (addr, port) -> [str|#{addr}:#{port}:|]
     when (not (exeVersion == exeVersionExpected)) $ do
-        printWith "ERR" [str|Version mismatch for #{prefix}#{exePath}|]
-        printWith "ERR" [str|Expected: #{exeVersionExpected}|]
-        printWith "ERR" [str|Got: #{exeVersion}|]
+        hPutStrLn outH $ showPair "ERR" [str|Version mismatch for #{prefix}#{exePath}|]
+        hPutStrLn outH $ showPair "ERR" [str|Expected: #{exeVersionExpected}|]
+        hPutStrLn outH $ showPair "ERR" [str|Got: #{exeVersion}|]
         error "VersionMismatch"
 
-tracing :: String -> String -> IO String
-tracing tag val = printWith tag val >> pure val
+tracing :: Handle -> String -> String -> IO String
+tracing outH tag val = hPutStrLn outH (showPair tag val) >> pure val
 
 bufferLefts
     :: IORef.IORef [a] -> Stream.Stream IO (Either a b) -> Stream.Stream IO b
@@ -96,23 +94,22 @@ data RpcException = EmptyOutput
 
 instance Exception RpcException
 
-pipe :: Pipe -> Runner IntermediateRep
-pipe using actionName input = do
-    printWith "ACT" actionName
-
-    printTag "INP"
-    toBinStream input & Stream.fold (FH.write stdout)
-    putStrLn ""
+pipe :: Handle -> Pipe -> Runner IntermediateRep
+pipe outH using cmd input = do
+    hPutStrLn outH $ showPair "CMD" cmd
+    hPutStrLn outH $ showTag "INP"
+    toBinStream input & Stream.fold (FH.write outH)
+    hPutStrLn outH ""
 
     errRef <- IORef.newIORef []
 
     actionRes <- try $
         toChunkStream input
-            & using actionName
+            & using cmd
             & bufferLefts errRef
             & Unicode.decodeUtf8Chunks
             & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
-            & Stream.fold (Fold.lmapM (tracing "STDOUT") Fold.latest)
+            & Stream.fold (Fold.lmapM (tracing outH "STDOUT") Fold.latest)
 
     chunkBufferReversed <- IORef.readIORef errRef
     let errBuffer = reverse chunkBufferReversed
@@ -120,22 +117,22 @@ pipe using actionName input = do
 
     errStream & Unicode.decodeUtf8Chunks
        & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
-       & Stream.fold (Fold.drainMapM (tracing "STDERR"))
+       & Stream.fold (Fold.drainMapM (tracing outH "STDERR"))
     case actionRes of
         Left (err :: SomeException) -> throwIO err
         Right Nothing -> throwIO EmptyOutput
         Right (Just val) -> pure $ irFromString val
 
-with :: RunningConfig -> Runner IntermediateRep
-with (RunningConfig{..}) actionName input = do
-    versionGuard rcSSH rcExe
+withH :: Handle -> RunningConfig -> Runner IntermediateRep
+withH outH (RunningConfig{..}) actionName input = do
+    versionGuard outH rcSSH rcExe
     let cmd =
               sshWrapper rcSSH
             $ userWrapper rcUser
             $ sudoWrapper rcSudo
             $ exeAction rcExe
-    printWith "RUN" cmd
-    pipe pipeChunksEither cmd input
+    hPutStrLn outH $ showPair "ACT" actionName
+    pipe outH pipeChunksEither cmd input
 
     where
     sshWrapper Nothing val = val
@@ -154,6 +151,9 @@ with (RunningConfig{..}) actionName input = do
     exeAction exeObj =
         let ePath = executablePath exeObj
          in [str|#{ePath} #{actionName}|]
+
+with :: RunningConfig -> Runner IntermediateRep
+with = withH stdout
 
 --------------------------------------------------------------------------------
 -- Backward compatibility
@@ -189,12 +189,12 @@ installOnRemote :: Executable -> SSHConfig -> FilePath -> IO ()
 installOnRemote localExe sshConf@(addr, port) remoteExePath = do
     let exePath = executablePath localExe
         remoteExeDir = takeDirectory remoteExePath
-    versionGuard Nothing localExe
-    withLog Cmd.toStdout $ mkSSHCmd sshConf [str|sudo mkdir -p #{remoteExeDir}|]
-    withLog Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+rw #{remoteExeDir}|]
-    withLog Cmd.toStdout [str|scp -P #{port} #{exePath} #{addr}:#{remoteExePath}|]
-    withLog Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+r #{remoteExeDir}|]
-    withLog Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+x #{remoteExePath}|]
+    versionGuard stdout Nothing localExe
+    Cmd.toStdout $ mkSSHCmd sshConf [str|sudo mkdir -p #{remoteExeDir}|]
+    Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+rw #{remoteExeDir}|]
+    Cmd.toStdout [str|scp -P #{port} #{exePath} #{addr}:#{remoteExePath}|]
+    Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+r #{remoteExeDir}|]
+    Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+x #{remoteExePath}|]
 
     where
 
