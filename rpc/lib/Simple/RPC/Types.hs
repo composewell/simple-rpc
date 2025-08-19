@@ -18,12 +18,12 @@ module Simple.RPC.Types
     , toChunkStream
     , fromBinStream
     , irFromString
+    , irToString
     , RpcMap
     , createRpcMap
     , lookupRpcSymbol
 
       -- Printing helper
-    , showTag
     , showPair
 
       -- Rpc
@@ -138,11 +138,8 @@ createRpcMap = HM.fromList . map (\x -> (symbol x, eval x))
 lookupRpcSymbol :: String -> RpcMap ir -> Maybe (ir -> IO ir)
 lookupRpcSymbol = HM.lookup
 
-showTag :: String -> String
-showTag tag = "[" ++ tag ++ "] "
-
 showPair :: String -> String -> String
-showPair tag val = showTag tag ++ " " ++ val
+showPair tag val = "[" ++ tag ++ "] " ++ val
 
 toIntermediateRep :: ToJSON a => a -> IntermediateRep
 toIntermediateRep = toJSON
@@ -207,3 +204,6 @@ irFromString input = do
     case decode $ BSLC.pack input of
         Nothing -> error $ "Unable to decode: " ++ input
         Just x -> x
+
+irToString :: IntermediateRep -> String
+irToString input = BSLC.unpack $ encode input

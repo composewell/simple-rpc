@@ -26,7 +26,6 @@ module Simple.RPC.Client
 -- Imports
 --------------------------------------------------------------------------------
 
-import System.IO (stdout, Handle, hPutStrLn)
 import System.IO.Unsafe (unsafePerformIO)
 import Control.Exception (SomeException, throwIO, try, Exception)
 import Control.Monad (when)
@@ -39,13 +38,11 @@ import Streamly.Data.Array (Array)
 import qualified Data.IORef as IORef
 import qualified Streamly.Data.Stream as Stream
 import qualified Streamly.Data.Fold as Fold
-import qualified Streamly.FileSystem.Handle as FH hiding (read)
 import qualified Streamly.Internal.Unicode.Stream as Unicode
 import qualified Streamly.Internal.System.Command as Cmd
 import qualified Streamly.Internal.System.Process as Proc
 
 import Simple.RPC.Types
-import Prelude hiding (putStrLn, print)
 
 --------------------------------------------------------------------------------
 -- Utils
@@ -57,8 +54,8 @@ pipeChunksEither
     -> Stream.Stream IO (Either (Array Word8) (Array Word8))
 pipeChunksEither = Cmd.pipeWith Proc.pipeChunksEither
 
-versionGuard :: Handle -> Maybe SSHConfig -> Executable -> IO ()
-versionGuard outH mSshConf exe = do
+versionGuard :: (String -> IO ()) -> Maybe SSHConfig -> Executable -> IO ()
+versionGuard send mSshConf exe = do
     let exePath = executablePath exe
         exeVersionExpected = executableVersion exe
     let cmdVersionCheck =
@@ -66,20 +63,20 @@ versionGuard outH mSshConf exe = do
                 Nothing -> [str|#{exePath}|]
                 Just (addr, port) ->
                     [str|ssh -T -p #{port} -o "StrictHostKeyChecking off" #{addr} #{exePath}|]
-    hPutStrLn outH $ showPair "CMD" cmdVersionCheck
+    send $ showPair "CMD" cmdVersionCheck
     exeVersion <- Cmd.toString cmdVersionCheck
     let prefix =
             case mSshConf of
                 Nothing -> ""
                 Just (addr, port) -> [str|#{addr}:#{port}:|]
     when (not (exeVersion == exeVersionExpected)) $ do
-        hPutStrLn outH $ showPair "ERR" [str|Version mismatch for #{prefix}#{exePath}|]
-        hPutStrLn outH $ showPair "ERR" [str|Expected: #{exeVersionExpected}|]
-        hPutStrLn outH $ showPair "ERR" [str|Got: #{exeVersion}|]
+        send $ showPair "ERR" [str|Version mismatch for #{prefix}#{exePath}|]
+        send $ showPair "ERR" [str|Expected: #{exeVersionExpected}|]
+        send $ showPair "ERR" [str|Got: #{exeVersion}|]
         error "VersionMismatch"
 
-tracing :: Handle -> String -> String -> IO String
-tracing outH tag val = hPutStrLn outH (showPair tag val) >> pure val
+tracing :: (String -> IO ()) -> String -> String -> IO String
+tracing send tag val = send (showPair tag val) >> pure val
 
 bufferLefts
     :: IORef.IORef [a] -> Stream.Stream IO (Either a b) -> Stream.Stream IO b
@@ -94,12 +91,12 @@ data RpcException = EmptyOutput
 
 instance Exception RpcException
 
-pipe :: Handle -> Pipe -> Runner IntermediateRep
-pipe outH using cmd input = do
-    hPutStrLn outH $ showPair "CMD" cmd
-    hPutStrLn outH $ showTag "INP"
-    toBinStream input & Stream.fold (FH.write outH)
-    hPutStrLn outH ""
+pipe :: (String -> IO ()) -> Pipe -> Runner IntermediateRep
+pipe send using cmd input = do
+    send $ showPair "CMD" cmd
+    send $ showPair "INP" ""
+    send $ irToString input
+    send ""
 
     errRef <- IORef.newIORef []
 
@@ -109,7 +106,7 @@ pipe outH using cmd input = do
             & bufferLefts errRef
             & Unicode.decodeUtf8Chunks
             & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
-            & Stream.fold (Fold.lmapM (tracing outH "STDOUT") Fold.latest)
+            & Stream.fold (Fold.lmapM (tracing send "STDOUT") Fold.latest)
 
     chunkBufferReversed <- IORef.readIORef errRef
     let errBuffer = reverse chunkBufferReversed
@@ -117,22 +114,22 @@ pipe outH using cmd input = do
 
     errStream & Unicode.decodeUtf8Chunks
        & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
-       & Stream.fold (Fold.drainMapM (tracing outH "STDERR"))
+       & Stream.fold (Fold.drainMapM (tracing send "STDERR"))
     case actionRes of
         Left (err :: SomeException) -> throwIO err
         Right Nothing -> throwIO EmptyOutput
         Right (Just val) -> pure $ irFromString val
 
-withH :: Handle -> RunningConfig -> Runner IntermediateRep
-withH outH (RunningConfig{..}) actionName input = do
-    versionGuard outH rcSSH rcExe
+withH :: (String -> IO ()) -> RunningConfig -> Runner IntermediateRep
+withH send (RunningConfig{..}) actionName input = do
+    versionGuard send rcSSH rcExe
     let cmd =
               sshWrapper rcSSH
             $ userWrapper rcUser
             $ sudoWrapper rcSudo
             $ exeAction rcExe
-    hPutStrLn outH $ showPair "ACT" actionName
-    pipe outH pipeChunksEither cmd input
+    send $ showPair "ACT" actionName
+    pipe send pipeChunksEither cmd input
 
     where
     sshWrapper Nothing val = val
@@ -153,7 +150,7 @@ withH outH (RunningConfig{..}) actionName input = do
          in [str|#{ePath} #{actionName}|]
 
 with :: RunningConfig -> Runner IntermediateRep
-with = withH stdout
+with = withH putStrLn
 
 --------------------------------------------------------------------------------
 -- Backward compatibility
@@ -189,7 +186,7 @@ installOnRemote :: Executable -> SSHConfig -> FilePath -> IO ()
 installOnRemote localExe sshConf@(addr, port) remoteExePath = do
     let exePath = executablePath localExe
         remoteExeDir = takeDirectory remoteExePath
-    versionGuard stdout Nothing localExe
+    versionGuard putStrLn Nothing localExe
     Cmd.toStdout $ mkSSHCmd sshConf [str|sudo mkdir -p #{remoteExeDir}|]
     Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+rw #{remoteExeDir}|]
     Cmd.toStdout [str|scp -P #{port} #{exePath} #{addr}:#{remoteExePath}|]
