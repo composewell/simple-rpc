@@ -16,7 +16,7 @@ module Simple.RPC.Server
 -- Imports
 --------------------------------------------------------------------------------
 
-import System.IO (stdout, stdin, hPutStrLn)
+import System.IO (stdout, stdin)
 import Data.Function ((&))
 import System.Environment (getArgs)
 import Streamly.Internal.Unicode.String (str)
@@ -29,7 +29,6 @@ import qualified Streamly.Internal.FileSystem.Handle as FH (read)
 
 import Simple.RPC.TH
 import Simple.RPC.Types
-import Prelude hiding (putStrLn, print)
 
 --------------------------------------------------------------------------------
 -- Utils
@@ -54,7 +53,7 @@ mainWith version actions = do
                         & Unicode.decodeUtf8'
                         & Stream.fold (Fold.takeEndBy_ (== '\n') Fold.toList)
                 let input = irFromString inputString
-                hPutStrLn stdout $ showPair "RPC" [str|#{actionName} #{inputString}|]
+                putStrLn $ showPair "RPC" [str|#{actionName} #{inputString}|]
                 output <- actFun input
-                hPutStrLn stdout ""
+                putStrLn ""
                 toBinStream output & Stream.fold (FH.write stdout)
