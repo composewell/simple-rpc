@@ -8,6 +8,7 @@ import Data.Function ((&))
 import Data.Maybe (fromJust, fromMaybe)
 import Streamly.Unicode.String (str)
 import System.FilePath ((</>))
+import System.Exit (die)
 
 import qualified Streamly.Internal.Data.Parser as Parser
 import qualified Streamly.Internal.Data.Stream as Stream
@@ -15,7 +16,6 @@ import qualified Streamly.FileSystem.FileIO as File
 import qualified Streamly.Internal.FileSystem.Path as Path
 import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Unicode.Stream as Unicode
-
 
 import Data.Text (Text)
 import qualified Data.Text.IO as T
@@ -78,31 +78,46 @@ slashToDot = map f
 -- Get module listing
 --------------------------------------------------------------------------------
 
+data CompileMode = Threaded | Dynamic | Normal
+    deriving (Eq, Show)
+
 getRpcModuleList :: Config -> IO [RpcModule]
 getRpcModuleList Config{..} = do
     Stream.fromList sourceDirectories
         & fmap (\x -> distBuildDir </> x)
         & Stream.concatMap exploreDir
-        & Stream.toList
+        & Stream.fold (Fold.foldlM' toListUniq (pure (Nothing, [])))
+        & fmap snd
 
     where
 
-    isThHsFile fp =
-        let len = length fp
-            thHsSuffix = drop (len - 6) fp
-            dynThHsSuffix = drop (len - 10) fp
-         in thHsSuffix == ".th.hs" && dynThHsSuffix /= ".dyn.th.hs"
+    toListUniq (Nothing, xs) (cmode, x) = pure (Just cmode, x:xs)
+    toListUniq (Just cmodeL, xs) (cmodeR, x)
+        | cmodeL == cmodeR = pure (Just cmodeL, x:xs)
+        | otherwise = do
+            let cmodeLStr = show cmodeL
+                cmodeRStr = show cmodeR
+            die [str|#
+Stale build files containing both #{cmodeLStr} and #{cmodeRStr}.#
+Please delete build files and try again.|]
+
+    categorize fp
+        | drop (length fp - 10) fp == ".thr.th.hs" = Just (Threaded, fp)
+        | drop (length fp - 10) fp == ".dyn.th.hs" = Just (Dynamic, fp)
+        | drop (length fp - 6) fp == ".th.hs" = Just (Normal, fp)
+        | otherwise = Nothing
 
     -- XXX Use Path instead of String
     exploreDir dir =
         Ls.ls (Ls.recursive On) (fromJust $ Path.fromString dir)
             & Stream.catRights
-            & fmap Path.toString
-            & Stream.filter isThHsFile
+            & fmap (categorize . Path.toString)
+            & Stream.catMaybes
             & Stream.mapM (parseTargetFile dir)
 
-parseTargetFile :: FilePath -> FilePath -> IO RpcModule
-parseTargetFile dirPrefix fp0 = do
+parseTargetFile ::
+    FilePath -> (CompileMode, FilePath) -> IO (CompileMode, RpcModule)
+parseTargetFile dirPrefix (cmode, fp0) = do
     fp <- Path.fromString fp0
     fList <-
         File.read fp
@@ -112,15 +127,19 @@ parseTargetFile dirPrefix fp0 = do
             & Stream.catRights
             & Stream.ordNub
             & Stream.toList
-    pure $ RpcModule moduleName fList
+    pure (cmode, RpcModule moduleName fList)
 
     where
+
+    suffixLen Threaded = 10
+    suffixLen Dynamic = 10
+    suffixLen Normal = 6
 
     moduleName =
         let lenPrefix = length dirPrefix
             val = drop (lenPrefix + 1) fp0
             lenVal = length val
-         in slashToDot $ take (lenVal - 6) val
+         in slashToDot $ take (lenVal - suffixLen cmode) val
 
     -- {-# ANN functionName "RPC" #-}
     pragmaParser =
