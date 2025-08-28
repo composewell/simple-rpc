@@ -53,7 +53,7 @@ mainWith version actions = do
                         & Unicode.decodeUtf8'
                         & Stream.fold (Fold.takeEndBy_ (== '\n') Fold.toList)
                 let input = irFromString inputString
-                putStrLn $ showPair "RPC" [str|#{actionName} #{inputString}|]
+                putStrLn $ showPair "SERVER" [str|#{actionName} #{inputString}|]
                 output <- actFun input
                 putStrLn ""
                 toBinStream output & Stream.fold (FH.write stdout)

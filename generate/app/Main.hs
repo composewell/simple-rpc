@@ -8,7 +8,6 @@ import Data.Function ((&))
 import Data.Maybe (fromJust, fromMaybe)
 import Streamly.Unicode.String (str)
 import System.FilePath ((</>))
-import System.Exit (die)
 
 import qualified Streamly.Internal.Data.Parser as Parser
 import qualified Streamly.Internal.Data.Stream as Stream
@@ -35,12 +34,16 @@ import Streamly.Coreutils.Common (Switch(..))
 -- Types
 --------------------------------------------------------------------------------
 
+data CompileMode = Threaded | Dynamic | Normal
+    deriving (Eq, Show, Read)
+
 data Config =
     Config
         { distBuildDir :: String
         , sourceDirectories :: [String]
         , rpcModulePath :: String
         , rpcModuleName :: String
+        , compilationMode :: CompileMode
         }
 
 data RpcModule =
@@ -58,6 +61,7 @@ parseConfigFromValue (Object obj) =
             <*> lookupVal "sourceDirectories" obj
             <*> lookupVal "rpcModulePath" obj
             <*> lookupVal "rpcModuleName" obj
+            <*> (read <$> lookupVal "compilationMode" obj)
 
     where
 
@@ -78,28 +82,17 @@ slashToDot = map f
 -- Get module listing
 --------------------------------------------------------------------------------
 
-data CompileMode = Threaded | Dynamic | Normal
-    deriving (Eq, Show)
-
 getRpcModuleList :: Config -> IO [RpcModule]
 getRpcModuleList Config{..} = do
     Stream.fromList sourceDirectories
         & fmap (\x -> distBuildDir </> x)
         & Stream.concatMap exploreDir
-        & Stream.fold (Fold.foldlM' toListUniq (pure (Nothing, [])))
-        & fmap snd
+        & Stream.fold
+              (Fold.filter
+                   ((== compilationMode) . fst)
+                   (Fold.lmap snd Fold.toList))
 
     where
-
-    toListUniq (Nothing, xs) (cmode, x) = pure (Just cmode, x:xs)
-    toListUniq (Just cmodeL, xs) (cmodeR, x)
-        | cmodeL == cmodeR = pure (Just cmodeL, x:xs)
-        | otherwise = do
-            let cmodeLStr = show cmodeL
-                cmodeRStr = show cmodeR
-            die [str|#
-Stale build files containing both #{cmodeLStr} and #{cmodeRStr}.#
-Please delete build files and try again.|]
 
     categorize fp
         | drop (length fp - 10) fp == ".thr.th.hs" = Just (Threaded, fp)
