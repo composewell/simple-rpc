@@ -27,7 +27,7 @@ import qualified Streamly.Unicode.Stream as Unicode
 import qualified Streamly.FileSystem.Handle as FH hiding (read)
 import qualified Streamly.Internal.FileSystem.Handle as FH (read)
 
-import Simple.RPC.TH
+import Simple.RPC.Internal.TH
 import Simple.RPC.Types
 
 --------------------------------------------------------------------------------

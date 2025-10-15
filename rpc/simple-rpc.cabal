@@ -39,8 +39,8 @@ library
     import: lib-options
     exposed-modules: Simple.RPC.Server
                    , Simple.RPC.Client
-                   , Simple.RPC.TH
                    , Simple.RPC.Types
+    other-modules: Simple.RPC.Internal.TH
     build-depends:    base
                     , streamly-core
                     , streamly-process

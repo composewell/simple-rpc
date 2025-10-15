@@ -1,6 +1,6 @@
 {-# LANGUAGE QuasiQuotes #-}
 
-module Simple.RPC.TH
+module Simple.RPC.Internal.TH
     ( rpcExport
     , rpcify
     ) where
