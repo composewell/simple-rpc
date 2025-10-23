@@ -30,6 +30,11 @@ breakTypeOnArrow t = [t]
 getNumArgs :: Type -> Int
 getNumArgs typ = length (breakTypeOnArrow typ) - 1
 
+-- | @rpcExport origName wrapperName@, creates an RPC endpoint function
+-- @wrapperName@ which is a RPC enabling wrapper for the @origName@ function.
+--
+-- The RPC wrapper facilitates deserialization of the input arguments and
+-- serialization of the output of the function.
 rpcExport :: String -> String -> Q [Dec]
 rpcExport oldFuncName newFuncName = do
     modName <- loc_module <$> location
@@ -40,7 +45,7 @@ rpcExport oldFuncName newFuncName = do
         n_endpoint = mkName endpoint
         n_runner = mkName "runner"
         n_val = mkName "val"
-        appEArgs f xs = foldl appE f xs
+        appEArgs = foldl appE
 
     typ <- getFunctionType n_raw
 
@@ -86,6 +91,10 @@ rpcExport oldFuncName newFuncName = do
     pure [prag, sig, def]
 
 -- An opinionated rpc export
+
+-- | The argument is the name of a function, the name must end with a single
+-- quote symbol. @rpcify@ generates an RPC wrapper for that function, the name
+-- of the wrapper is the original name without the single quote.
 rpcify :: Name -> Q [Dec]
 rpcify rawFuncName =
     let raw = nameBase rawFuncName

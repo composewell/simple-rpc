@@ -3,50 +3,66 @@
 
 module Simple.RPC.Client
     (
-      Executable(..)
+    -- * Endpoint Invocation
+    -- | Generate a serializable representation of the call (function name and
+    -- arguments) which can be transferred over to a remote system for
+    -- execution.
+
+      -- pipe -- XXX internal uses Pipe
+      withH
+    , with
+
+    -- * Copying RPC Executable
+    , installOnRemote
+
+    -- * Re-exported
+    , Executable(..)
     , SSHConfig
     , Username
-    , pipe
-    , withH
-    , with
     , asUser
     , onSSH
     , exec
     , sudo
 
-    -- Backward compatibility
+    -- * Deprecated
     , mkShCommand
     , runAt
     , runAs
     , runAtAs
-    , installOnRemote
     ) where
 
 --------------------------------------------------------------------------------
 -- Imports
 --------------------------------------------------------------------------------
 
-import System.IO.Unsafe (unsafePerformIO)
 import Control.Exception (SomeException, throwIO, try, Exception)
 import Control.Monad (when)
 import Data.Function ((&))
 import Data.Word (Word8)
+import Streamly.Data.Array (Array)
+import Streamly.Data.Stream (Stream)
 import Streamly.Internal.Unicode.String (str)
 import System.FilePath (takeDirectory)
-import Streamly.Data.Array (Array)
+import System.IO.Unsafe (unsafePerformIO)
 
 import qualified Data.IORef as IORef
-import qualified Streamly.Data.Stream as Stream
+import qualified Streamly.Data.Array as Array
 import qualified Streamly.Data.Fold as Fold
-import qualified Streamly.Internal.Unicode.Stream as Unicode
+import qualified Streamly.Data.Stream as Stream
 import qualified Streamly.Internal.System.Command as Cmd
 import qualified Streamly.Internal.System.Process as Proc
+import qualified Streamly.Internal.Unicode.Stream as Unicode
 
 import Simple.RPC.Types
 
 --------------------------------------------------------------------------------
 -- Utils
 --------------------------------------------------------------------------------
+
+type Pipe =
+    String ->
+    Stream IO (Array.Array Word8) ->
+    Stream IO (Either (Array.Array Word8) (Array.Array Word8))
 
 pipeChunksEither
     :: String
@@ -91,6 +107,20 @@ data RpcException = EmptyOutput
 
 instance Exception RpcException
 
+-- XXX We should allow the input to be a stream instead of being finite.
+-- XXX We should not buffer the output, it should be returned as a stream.
+-- XXX We should be able to use websockets instead of ssh.
+
+-- | @pipe send using cmd input@ - execute @cmd@ (the @ssh@ command) as a
+-- process providing @input@ on its stdin and returning the last line of its
+-- output as result. i.e. it takes input from stdin and provides output on
+-- stdout.
+--
+-- BUGs: the output JSON from the remote call must not have a newline '\n'
+-- character. It will cause unexpected behavior. Also, the output must be
+-- finite as it is collected in a buffer.
+--
+-- @send@ is a function for logging a String for debug and tracing.
 pipe :: (String -> IO ()) -> Pipe -> Runner IntermediateRep
 pipe send using cmd input = do
     send $ showPair "CMD" cmd
@@ -120,6 +150,11 @@ pipe send using cmd input = do
         Right Nothing -> throwIO EmptyOutput
         Right (Just val) -> pure $ irFromString val
 
+-- XXX the remote call should be more seamless. We should be able to wrap any
+-- arbitrary code in runAt as long as its input and output are serializable.
+-- Maybe we can design a Monad to implement the runAt call under the hood.
+
+-- | @send@ is a function that writes to stdout.
 withH :: (String -> IO ()) -> RunningConfig -> Runner IntermediateRep
 withH send (RunningConfig{..}) actionName input = do
     versionGuard send rcSSH rcExe
@@ -132,11 +167,17 @@ withH send (RunningConfig{..}) actionName input = do
     pipe send pipeChunksEither cmd input
 
     where
+
     sshWrapper Nothing val = val
     sshWrapper (Just (addr, port)) val =
         let quotedVal = show val
          in [str|ssh -T -p #{port} -o "StrictHostKeyChecking off" #{addr} #{quotedVal}|]
 
+    -- XXX we should use either user wrapper or sudo wrapper, not both. If we
+    -- are using userWrapper then we know we are sudo capable and can use sudo
+    -- directly.
+
+    -- Does not run the shell profile but runs the rc file
     userWrapper Nothing val = val
     userWrapper (Just username) val =
         let quotedVal = show val
@@ -149,6 +190,11 @@ withH send (RunningConfig{..}) actionName input = do
         let ePath = executablePath exeObj
          in [str|#{ePath} #{actionName}|]
 
+-- XXX rename to runWith?
+
+-- | Given an RPC server access specification create a Runner which takes an
+-- endpoint call specification, to run the endpoint on the server and return
+-- the result.
 with :: RunningConfig -> Runner IntermediateRep
 with = withH putStrLn
 
@@ -182,15 +228,27 @@ runAtAs :: Executable -> SSHConfig -> Username -> Runner IntermediateRep
 runAtAs exe sshConf uname = with (exec exe & onSSH sshConf & asUser uname)
 
 -- NOTE: This should be removed from here. Leave the installation to the user.
+-- XXX We can avoid sudo access or have a separate API which does not require
+-- sudo access.
+
+-- XXX scpExecutable
+
+-- | @installOnRemote localPath sshEndpoint remotePath@. Install the RPC
+-- endpoint server executable on a remote machine using @scp@. Requires @sudo@
+-- access to create the directory if it does not exist.
 installOnRemote :: Executable -> SSHConfig -> FilePath -> IO ()
 installOnRemote localExe sshConf@(addr, port) remoteExePath = do
     let exePath = executablePath localExe
         remoteExeDir = takeDirectory remoteExePath
     versionGuard putStrLn Nothing localExe
     Cmd.toStdout $ mkSSHCmd sshConf [str|sudo mkdir -p #{remoteExeDir}|]
+
+    -- XXX this is unsafe, gives write access to anyone.
     Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+rw #{remoteExeDir}|]
     Cmd.toStdout [str|scp -P #{port} #{exePath} #{addr}:#{remoteExePath}|]
+    -- XXX nned chmod o-w
     Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+r #{remoteExeDir}|]
+    -- XXX we do not need sudo for this.
     Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+x #{remoteExePath}|]
 
     where
