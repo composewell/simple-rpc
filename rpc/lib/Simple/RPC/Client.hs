@@ -11,24 +11,13 @@ module Simple.RPC.Client
       -- pipe -- XXX internal uses Pipe
       withH
     , with
+    , runAt
 
     -- * Copying RPC Executable
     , installOnRemote
 
-    -- * Re-exported
-    , Executable(..)
-    , SSHConfig
-    , Username
-    , asUser
-    , onSSH
-    , exec
-    , sudo
-
     -- * Deprecated
     , mkShCommand
-    , runAt
-    , runAs
-    , runAtAs
     ) where
 
 --------------------------------------------------------------------------------
@@ -70,7 +59,7 @@ pipeChunksEither
     -> Stream.Stream IO (Either (Array Word8) (Array Word8))
 pipeChunksEither = Cmd.pipeWith Proc.pipeChunksEither
 
-versionGuard :: (String -> IO ()) -> Maybe SSHConfig -> Executable -> IO ()
+versionGuard :: (String -> IO ()) -> Maybe (String, String) -> Executable -> IO ()
 versionGuard send mSshConf exe = do
     let exePath = executablePath exe
         exeVersionExpected = executableVersion exe
@@ -157,12 +146,12 @@ pipe send using cmd input = do
 -- | @send@ is a function that writes to stdout.
 withH :: (String -> IO ()) -> RunningConfig -> Runner IntermediateRep
 withH send (RunningConfig{..}) actionName input = do
-    versionGuard send rcSSH rcExe
+    versionGuard send rcRemote rcImage
     let cmd =
-              sshWrapper rcSSH
+              sshWrapper rcRemote
             $ userWrapper rcUser
             $ sudoWrapper rcSudo
-            $ exeAction rcExe
+            $ exeAction rcImage
     send $ showPair "ACT" actionName
     pipe send pipeChunksEither cmd input
 
@@ -191,12 +180,18 @@ withH send (RunningConfig{..}) actionName input = do
          in [str|#{ePath} #{actionName}|]
 
 -- XXX rename to runWith?
+-- XXX Do not expose "with", just use "runAt"
+-- XXX putStrLn can be part of RunningConfig
 
 -- | Given an RPC server access specification create a Runner which takes an
 -- endpoint call specification, to run the endpoint on the server and return
 -- the result.
 with :: RunningConfig -> Runner IntermediateRep
 with = withH putStrLn
+
+-- | Make a RPC call at the remote host specified by the first argument.
+runAt :: RunningConfig -> RpcSymbol IntermediateRep typ -> typ
+runAt cfg sym = call sym (with cfg)
 
 --------------------------------------------------------------------------------
 -- Backward compatibility
@@ -218,15 +213,6 @@ mkShCommand sym exe inpList =
         cmdQuoted = show cmd
      in [str|sh -c #{cmdQuoted}|]
 
-runAt :: Executable -> SSHConfig -> Runner IntermediateRep
-runAt exe sshConf = with (exec exe & onSSH sshConf)
-
-runAs :: Executable -> Username -> Runner IntermediateRep
-runAs exe uname = with (exec exe & asUser uname)
-
-runAtAs :: Executable -> SSHConfig -> Username -> Runner IntermediateRep
-runAtAs exe sshConf uname = with (exec exe & onSSH sshConf & asUser uname)
-
 -- NOTE: This should be removed from here. Leave the installation to the user.
 -- XXX We can avoid sudo access or have a separate API which does not require
 -- sudo access.
@@ -236,7 +222,7 @@ runAtAs exe sshConf uname = with (exec exe & onSSH sshConf & asUser uname)
 -- | @installOnRemote localPath sshEndpoint remotePath@. Install the RPC
 -- endpoint server executable on a remote machine using @scp@. Requires @sudo@
 -- access to create the directory if it does not exist.
-installOnRemote :: Executable -> SSHConfig -> FilePath -> IO ()
+installOnRemote :: Executable -> (String, String) -> FilePath -> IO ()
 installOnRemote localExe sshConf@(addr, port) remoteExePath = do
     let exePath = executablePath localExe
         remoteExeDir = takeDirectory remoteExePath
