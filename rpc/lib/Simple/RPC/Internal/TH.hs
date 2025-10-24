@@ -30,11 +30,10 @@ breakTypeOnArrow t = [t]
 getNumArgs :: Type -> Int
 getNumArgs typ = length (breakTypeOnArrow typ) - 1
 
--- | @rpcExport origName wrapperName@, creates an RPC endpoint function
--- @wrapperName@ which is a RPC enabling wrapper for the @origName@ function.
+-- | @rpcExport origName rpcName@, creates a toplevel value definition with
+-- the name @rpcName@, of type 'RpcSymbol' representing an RPC endpoint.
 --
--- The RPC wrapper facilitates deserialization of the input arguments and
--- serialization of the output of the function.
+-- See the details under the docs of 'RpcSymbol'.
 rpcExport :: String -> String -> Q [Dec]
 rpcExport oldFuncName newFuncName = do
     modName <- loc_module <$> location

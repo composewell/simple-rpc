@@ -1,5 +1,4 @@
 {-# LANGUAGE ImpredicativeTypes #-}
-{-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
@@ -40,13 +39,14 @@ module Simple.RPC.Types
 
     -- * Endpoint access config
     , Executable(..)
-    , Username
-    , SSHConfig
     , RunningConfig(..)
-    , exec
-    , onSSH
-    , asUser
-    , sudo
+    , defaultConfig
+    , setImage
+    , setImageFlags
+    , setRemote
+    , setUser
+    , useSudo
+    , setLogger
 
     -- * RPC
     , Runner
@@ -78,14 +78,6 @@ import qualified Streamly.Data.Stream as Stream
 -- Running Config
 --------------------------------------------------------------------------------
 
--- XXX ServerSpec
-
--- | (server name, port)?
-type SSHConfig = (String, String)
-
--- | Username for ssh access.
-type Username = String
-
 -- | RPC server executable name and version.
 data Executable =
     Executable
@@ -94,38 +86,78 @@ data Executable =
         }
 
 -- XXX CallSpec
+-- XXX Currently user is specified at two places user@hostname and rcUser. We
+-- need to have a single mechanism.
 
 -- | RPC server specification: server, port, username, executable location,
 -- privileges to use etc.
 data RunningConfig =
     RunningConfig
-        { rcSSH :: Maybe SSHConfig
-        , rcUser :: Maybe Username
+        { rcRemote :: Maybe (String, String)
+        , rcUser :: Maybe String
         , rcSudo :: Bool
-        , rcExe :: Executable
+        , rcImage :: Executable
+        , rcImageFlags :: String
+        , rcLogger :: String -> IO ()
         }
+
+-- XXX Use the default image as the current executable image located in the
+-- remote home directory at the same place as here. If the image does not exist
+-- it can be installed, if it exists it can be updated if the sha256 does not
+-- match with the sha256 of local image. Image can be named with a platform
+-- suffix so that we can have cross platform access.
+
+-- | Note we can use rpc to local host as well for executing a function as some
+-- other user on the same host without using sudo.
+defaultConfig :: Executable -> RunningConfig
+defaultConfig exe =
+    RunningConfig
+    { rcRemote = Nothing
+    , rcUser = Nothing
+    , rcSudo = False
+    , rcImage = exe
+    , rcImageFlags = ""
+    , rcLogger = const (pure ())
+    }
 
 -- We've changed the name of this from "using" to "exec". haskell-src-exts
 -- fails to parse the keword "using". Did not explore this in depth.
--- XXX rename to serverExe
-exec :: Executable -> RunningConfig
-exec = RunningConfig Nothing Nothing False
 
--- XXX rename to onServer
+-- | The RPC executable to use on the server for making the RPC call.
+--
+-- The executable is invoked as @image <image flags> endpoint@.
+setImage :: Executable -> RunningConfig -> RunningConfig
+setImage x rc = rc { rcImage = x }
 
--- | Modify the server name and port to use for ssh access.
-onSSH :: SSHConfig -> RunningConfig -> RunningConfig
-onSSH x rc = rc { rcSSH = Just x }
+-- | Use these flags when invoking the RPC server image.
+--
+-- Default is "" i.e. no flags.
+setImageFlags :: String -> RunningConfig -> RunningConfig
+setImageFlags x rc = rc { rcImageFlags = x }
+
+-- | Modify the server name to use for ssh access.
+--
+-- Default is local host IP address "127.0.0.1".
+setRemote :: (String, String) -> RunningConfig -> RunningConfig
+setRemote x rc = rc { rcRemote = Just x }
 
 -- | Modify the ssh username to use for running the endpoint.
-asUser :: Username -> RunningConfig -> RunningConfig
-asUser x rc = rc { rcUser = Just x }
-
--- XXX rename to asSuperUser or asRoot
+--
+-- Default is the current user.
+setUser :: String -> RunningConfig -> RunningConfig
+setUser x rc = rc { rcUser = Just x }
 
 -- | Use root privileges for running the endpoint.
-sudo :: Bool -> RunningConfig -> RunningConfig
-sudo x rc = rc { rcSudo = x }
+--
+-- Default is 'False'.
+useSudo :: Bool -> RunningConfig -> RunningConfig
+useSudo x rc = rc { rcSudo = x }
+
+-- | Use the supplied logger to for log and trace.
+--
+-- Default is 'putStrLn'.
+setLogger :: (String -> IO ()) -> RunningConfig -> RunningConfig
+setLogger x rc = rc { rcLogger = x }
 
 --------------------------------------------------------------------------------
 -- Symbols
@@ -150,13 +182,33 @@ data RpcEval ir =
         }
 
 -- XXX RpcEndpoint
+-- XXX we should directly use "with" functionality in "call"? We do not need
+-- this to be generic it could be ssh specific.
 
--- | Represents both the call side and the server side of an RPC endpoint.
+-- NOTE: We could define the client side and server side functions separately
+-- and that will allow the client side call to be simpler as we do not need an
+-- indirection to access the call field of the record, but that complicates the
+-- exports and we will have to export both the symbols separately in the export
+-- list. We can possibly write a macro to export all three at the same time,
+-- local, client, server.
+
+-- | Represents an RPC endpoint consisting of:
+--
+-- * @run@ is the same as the original function
+-- * @call@ takes a 'Runner' and converts it into a local function call. The
+-- arguments from the local call are converted to IR and supplied to the
+-- Runner, similarly the result from the Runner is converted to Haskell type
+-- and returned from the local call.  Used at the client side invocation of the
+-- function.
+-- * @evaluator@ is a pair of rpc symbol name and a wrapper over the original
+-- function which takes IR arguments and returns an IR result. The wrapper
+-- converts the IR arguments to Haskell types and converts the Haskell result
+-- type of the original function to IR.
 data RpcSymbol ir typ =
     RpcSymbol
-        { run :: typ                                -- raw
-        , call :: Runner ir -> typ                  -- client
-        , evaluator :: RpcEval ir                   -- server
+        { run :: typ                  -- original function for local call
+        , call :: Runner ir -> typ    -- client side generic (using IR) call
+        , evaluator :: RpcEval ir     -- server side generic (using IR) call
         }
 
 -- XXX Map instead of HashMap?
