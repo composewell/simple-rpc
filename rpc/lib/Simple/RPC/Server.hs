@@ -5,6 +5,7 @@ module Simple.RPC.Server
     ( mainWith
     , RpcMap
     , createRpcMap
+    , invokeFunction
     ) where
 
 --------------------------------------------------------------------------------
@@ -28,7 +29,29 @@ import Simple.RPC.Internal.Types
 -- Utils
 --------------------------------------------------------------------------------
 
--- XXX To reduce execution delays we should have this running as a server.
+-- XXX To reduce execution delays we should have this running as a server. Or
+-- at least make sure the executable is not swapped out.
+
+-- | Given a RpcMap and a function name invoke the function. The function input
+-- is supplied in serialized form on the stdin and the output is streamed in
+-- serialized form to stdout.
+invokeFunction :: RpcMap IntermediateRep -> String -> IO ()
+invokeFunction actions actionName =
+    case lookupRpcSymbol actionName actions of
+        Nothing -> error [str|#{actionName} not found|]
+        Just actFun -> do
+            -- XXX we should not buffer the input, it should be directly
+            -- streamed to the function, otherwise we cannot support
+            -- infinite or large input.
+            inputString <-
+                FH.read stdin
+                    & Unicode.decodeUtf8'
+                    & Stream.fold (Fold.takeEndBy_ (== '\n') Fold.toList)
+            let input = irFromString inputString
+            putStrLn $ showPair "SERVER" [str|#{actionName} #{inputString}|]
+            output <- actFun input
+            putStrLn ""
+            toBinStream output & Stream.fold (FH.write stdout)
 
 -- | The main function for the RPC endpoint executable. The first argument is
 -- the version number. The behavior of the main function in the executable is
@@ -51,24 +74,5 @@ mainWith version actions = do
     args <- getArgs
     case args of
         [] -> putStr version
-        [actName] -> runner actName
+        [actName] -> invokeFunction actions actName
         _ -> error [str|Usage: <executable> [<action>]|]
-
-    where
-
-    runner actionName =
-        case lookupRpcSymbol actionName actions of
-            Nothing -> error [str|#{actionName} not found|]
-            Just actFun -> do
-                -- XXX we should not buffer the input, it should be directly
-                -- streamed to the function, otherwise we cannot support
-                -- infinite or large input.
-                inputString <-
-                    FH.read stdin
-                        & Unicode.decodeUtf8'
-                        & Stream.fold (Fold.takeEndBy_ (== '\n') Fold.toList)
-                let input = irFromString inputString
-                putStrLn $ showPair "SERVER" [str|#{actionName} #{inputString}|]
-                output <- actFun input
-                putStrLn ""
-                toBinStream output & Stream.fold (FH.write stdout)
