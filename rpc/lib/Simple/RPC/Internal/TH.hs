@@ -10,7 +10,7 @@ module Simple.RPC.Internal.TH
 --------------------------------------------------------------------------------
 
 import Language.Haskell.TH
-import Simple.RPC.Types
+import Simple.RPC.Internal.Types
 
 --------------------------------------------------------------------------------
 -- Functions

@@ -5,7 +5,7 @@
 
 -- | Types and functions common to client and server.
 --
-module Simple.RPC.Types
+module Simple.RPC.Internal.Types
     ( -- * Intermediate Representation (IR)
       IntermediateRep
     , toIntermediateRep
@@ -31,6 +31,9 @@ module Simple.RPC.Types
     , RpcEval(..)
     , RpcMap
     , RpcSymbol(..)
+    , rpcName
+    , rpcServiceFunction
+    , rpcCallUsing
     , createRpcMap
     , lookupRpcSymbol
 
@@ -207,10 +210,27 @@ data RpcEval ir =
 -- type of the original function to IR.
 data RpcSymbol ir typ =
     RpcSymbol
-        { run :: typ                  -- original function for local call
+        { direct :: typ               -- original function for local call
         , call :: Runner ir -> typ    -- client side generic (using IR) call
         , evaluator :: RpcEval ir     -- server side generic (using IR) call
         }
+
+-- | Get the name of the RPC endpoint.
+rpcName :: RpcSymbol ir typ -> String
+rpcName = symbol . evaluator
+
+-- | Get the server side wrapper of the function to be called. Arguments of the
+-- function are in IR and result is also in IR.
+rpcServiceFunction :: RpcSymbol ir typ -> ir -> IO ir
+rpcServiceFunction = eval . evaluator
+
+-- | A client side wrapper for making a call to the function using a Runner
+-- which actually transfers the arguments to remote end, makes the call and
+-- returns the result as IR. The job of this funciton is to convert the Haskell
+-- type arguments to IR and call the Runner function, and then convert the
+-- result of Runner back to Haskell type.
+rpcCallUsing :: RpcSymbol ir typ -> Runner ir -> typ
+rpcCallUsing = call
 
 -- XXX Map instead of HashMap?
 -- XXX rename to ServiceMap
@@ -306,7 +326,7 @@ createObj kv = Json.object $ map (Data.Bifunctor.first Key.fromString) kv
 --------------------------------------------------------------------------------
 
 -- | Convert the Haskell representation of IR (i.e. Json) to a byte stream.
-toBinStream :: IntermediateRep -> Stream IO Word8
+toBinStream :: Monad m => IntermediateRep -> Stream m Word8
 toBinStream input =
     Stream.enumerateFromTo 0 (len - 1)
         & fmap (BSL.index bsl)

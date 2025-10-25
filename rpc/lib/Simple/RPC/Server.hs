@@ -2,14 +2,9 @@
 {-# LANGUAGE RecordWildCards #-}
 
 module Simple.RPC.Server
-    (
-      rpcExport
-    , mainWith
-
-    -- XXX Experimental
-    , rpcify
-    -- XXX this is re-exported
-    , RpcSymbol(..)
+    ( mainWith
+    , RpcMap
+    , createRpcMap
     ) where
 
 --------------------------------------------------------------------------------
@@ -17,7 +12,6 @@ module Simple.RPC.Server
 --------------------------------------------------------------------------------
 
 import Data.Function ((&))
-import Simple.RPC.Internal.TH (rpcExport, rpcify)
 import Streamly.Internal.Unicode.String (str)
 import System.Environment (getArgs)
 import System.IO (stdout, stdin)
@@ -28,9 +22,7 @@ import qualified Streamly.FileSystem.Handle as FH hiding (read)
 import qualified Streamly.Internal.FileSystem.Handle as FH (read)
 import qualified Streamly.Unicode.Stream as Unicode
 
-import Simple.RPC.Types
-    ( RpcSymbol(..), RpcMap, IntermediateRep, lookupRpcSymbol, irFromString
-    , toBinStream, showPair)
+import Simple.RPC.Internal.Types
 
 --------------------------------------------------------------------------------
 -- Utils

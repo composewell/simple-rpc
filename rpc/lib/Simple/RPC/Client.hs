@@ -5,12 +5,24 @@ module Simple.RPC.Client
     (
     -- * RPC call
       runAt
+    , run
+
+    -- * RPC call config
+    , Executable(..) -- XXX RpcImage, use sha256 instead of version
+    , RunningConfig(..) -- XXX RpcConfig or just Config
+    , defaultConfig
+    , setImage
+    , setImageFlags
+    , setRemote
+    , setUser
+    , useSudo
+    , setLogger
+
+    -- * Pretty Printing
+    , showPair -- XXX this does not belong in simple-rpc
 
     -- * Copy RPC Executable
     , installOnRemote
-
-    -- * Deprecated
-    , mkShCommand
     ) where
 
 --------------------------------------------------------------------------------
@@ -25,7 +37,6 @@ import Streamly.Data.Array (Array)
 import Streamly.Data.Stream (Stream)
 import Streamly.Internal.Unicode.String (str)
 import System.FilePath (takeDirectory)
-import System.IO.Unsafe (unsafePerformIO)
 
 import qualified Data.IORef as IORef
 import qualified Streamly.Data.Array as Array
@@ -35,7 +46,7 @@ import qualified Streamly.Internal.System.Command as Cmd
 import qualified Streamly.Internal.System.Process as Proc
 import qualified Streamly.Internal.Unicode.Stream as Unicode
 
-import Simple.RPC.Types
+import Simple.RPC.Internal.Types
 
 --------------------------------------------------------------------------------
 -- Utils
@@ -179,31 +190,21 @@ with (RunningConfig{..}) actionName input = do
 runAt :: RunningConfig -> RpcSymbol IntermediateRep typ -> typ
 runAt cfg sym = call sym (with cfg)
 
+-- | Make a direct local call to the function. This is equivalent to calling
+-- the function directly without going through any wrappers, serialization,
+-- deserialization.
+run :: RpcSymbol IntermediateRep typ -> typ
+run = direct
+
 --------------------------------------------------------------------------------
 -- Backward compatibility
 --------------------------------------------------------------------------------
-
-mkShCommand
-    :: RpcSymbol IntermediateRep b -> Executable -> [IntermediateRep] -> String
-mkShCommand sym exe inpList =
-    let cmdName = symbol (evaluator sym)
-        epath = executablePath exe
-        inpStr =
-            toIntermediateRep inpList
-                & toBinStream
-                & Unicode.decodeUtf8'
-                & Stream.toList
-                & unsafePerformIO
-        inpStrQuoted = show inpStr
-        cmd = [str|echo #{inpStrQuoted} | #{epath} #{cmdName}|]
-        cmdQuoted = show cmd
-     in [str|sh -c #{cmdQuoted}|]
 
 -- NOTE: This should be removed from here. Leave the installation to the user.
 -- XXX We can avoid sudo access or have a separate API which does not require
 -- sudo access.
 
--- XXX scpExecutable
+-- XXX scpRpcImage
 
 -- | @installOnRemote localPath sshEndpoint remotePath@. Install the RPC
 -- endpoint server executable on a remote machine using @scp@. Requires @sudo@

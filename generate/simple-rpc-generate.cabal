@@ -38,7 +38,6 @@ executable simple-rpc-generate
     build-depends: base
                  , streamly-core
                  , prettyprinter
-                 , streamly-process
                  , filepath
                  , text
                  , aeson

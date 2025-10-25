@@ -195,7 +195,7 @@ generateRpcModule conf@Config{..} = do
 
     docImportList docList =
         vsep
-            $ pretty "import Simple.RPC.Types"
+            $ pretty "import Simple.RPC"
             : map fst docList
     docEvalList docList =
         let evalList = concat $ map snd docList

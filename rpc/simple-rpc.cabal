@@ -37,10 +37,12 @@ common lib-options
 
 library
     import: lib-options
-    exposed-modules: Simple.RPC.Server
+    exposed-modules: Simple.RPC
+                   , Simple.RPC.Server
                    , Simple.RPC.Client
-                   , Simple.RPC.Types
-    other-modules: Simple.RPC.Internal.TH
+                   , Simple.RPC.Common
+    other-modules:   Simple.RPC.Internal.TH
+                   , Simple.RPC.Internal.Types
     build-depends:    base
                     , streamly-core
                     , streamly-process
