@@ -8,9 +8,7 @@ module Simple.RPC.Client
     -- arguments) which can be transferred over to a remote system for
     -- execution.
 
-      -- pipe -- XXX internal uses Pipe
-      withH
-    , with
+      with
     , runAt
 
     -- * Copying RPC Executable
@@ -144,8 +142,9 @@ pipe send using cmd input = do
 -- Maybe we can design a Monad to implement the runAt call under the hood.
 
 -- | @send@ is a function that writes to stdout.
-withH :: (String -> IO ()) -> RunningConfig -> Runner IntermediateRep
-withH send (RunningConfig{..}) actionName input = do
+withH :: RunningConfig -> Runner IntermediateRep
+withH (RunningConfig{..}) actionName input = do
+    let send = rcLogger
     versionGuard send rcRemote rcImage
     let cmd =
               sshWrapper rcRemote
@@ -181,17 +180,16 @@ withH send (RunningConfig{..}) actionName input = do
 
 -- XXX rename to runWith?
 -- XXX Do not expose "with", just use "runAt"
--- XXX putStrLn can be part of RunningConfig
 
 -- | Given an RPC server access specification create a Runner which takes an
 -- endpoint call specification, to run the endpoint on the server and return
 -- the result.
 with :: RunningConfig -> Runner IntermediateRep
-with = withH putStrLn
+with rc = withH (rc {rcLogger = putStrLn})
 
 -- | Make a RPC call at the remote host specified by the first argument.
 runAt :: RunningConfig -> RpcSymbol IntermediateRep typ -> typ
-runAt cfg sym = call sym (with cfg)
+runAt cfg sym = call sym (withH cfg)
 
 --------------------------------------------------------------------------------
 -- Backward compatibility
