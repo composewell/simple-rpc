@@ -117,7 +117,8 @@ defaultConfig exe =
     , rcSudo = False
     , rcImage = exe
     , rcImageFlags = ""
-    , rcLogger = const (pure ())
+    -- , rcLogger = const (pure ())
+    , rcLogger = putStrLn
     }
 
 -- We've changed the name of this from "using" to "exec". haskell-src-exts

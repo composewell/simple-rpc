@@ -3,15 +3,10 @@
 
 module Simple.RPC.Client
     (
-    -- * Endpoint Invocation
-    -- | Generate a serializable representation of the call (function name and
-    -- arguments) which can be transferred over to a remote system for
-    -- execution.
+    -- * RPC call
+      runAt
 
-      with
-    , runAt
-
-    -- * Copying RPC Executable
+    -- * Copy RPC Executable
     , installOnRemote
 
     -- * Deprecated
@@ -141,9 +136,11 @@ pipe send using cmd input = do
 -- arbitrary code in runAt as long as its input and output are serializable.
 -- Maybe we can design a Monad to implement the runAt call under the hood.
 
--- | @send@ is a function that writes to stdout.
-withH :: RunningConfig -> Runner IntermediateRep
-withH (RunningConfig{..}) actionName input = do
+-- | Given an RPC server access specification create a Runner which takes an
+-- endpoint call specification, to run the endpoint on the server and return
+-- the result.
+with :: RunningConfig -> Runner IntermediateRep
+with (RunningConfig{..}) actionName input = do
     let send = rcLogger
     versionGuard send rcRemote rcImage
     let cmd =
@@ -178,18 +175,9 @@ withH (RunningConfig{..}) actionName input = do
         let ePath = executablePath exeObj
          in [str|#{ePath} #{actionName}|]
 
--- XXX rename to runWith?
--- XXX Do not expose "with", just use "runAt"
-
--- | Given an RPC server access specification create a Runner which takes an
--- endpoint call specification, to run the endpoint on the server and return
--- the result.
-with :: RunningConfig -> Runner IntermediateRep
-with rc = withH (rc {rcLogger = putStrLn})
-
 -- | Make a RPC call at the remote host specified by the first argument.
 runAt :: RunningConfig -> RpcSymbol IntermediateRep typ -> typ
-runAt cfg sym = call sym (withH cfg)
+runAt cfg sym = call sym (with cfg)
 
 --------------------------------------------------------------------------------
 -- Backward compatibility
