@@ -62,7 +62,7 @@ invokeFunction actions actionName =
                     Right x -> pure x
             output <- actFun input
             putStrLn ""
-            toBinStream output & Stream.fold (FH.write stdout)
+            toChunkStream output & Stream.fold (FH.writeChunks stdout)
 
 -- | The main function for the RPC endpoint executable. The first argument is
 -- the version number. The behavior of the main function in the executable is

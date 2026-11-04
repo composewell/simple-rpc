@@ -6,13 +6,15 @@ module Main (main) where
 -- Imports
 -------------------------------------------------------------------------------
 
-import Control.Exception (displayException, finally, try)
+import Control.Exception (displayException, evaluate, finally, try)
 import Control.Monad (unless)
 import Data.Bits ((.&.))
 import Data.Function ((&))
 import Data.Functor.Identity (runIdentity)
+import Data.Int (Int64)
 import Data.IORef (modifyIORef, newIORef, readIORef)
 import Data.List (isPrefixOf, sort)
+import GHC.Clock (getMonotonicTime)
 import Numeric (showOct)
 import Streamly.Internal.System.Process (ProcessFailure(..))
 import System.Directory
@@ -33,6 +35,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.HashMap.Strict as HM
+import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Data.Stream as Stream
 import qualified Test.QuickCheck as QC
 
@@ -91,6 +94,21 @@ commonTests =
             let bytes = runIdentity (Stream.toList (toBinStream v))
              in bytes == BSL.unpack (Json.encode v)
                     && Json.decode (BSL.pack bytes) == Just v
+
+    , test "toBinStream time is linear in the size" $ do
+        -- About 24 MB of JSON in about 750 chunks. A time quadratic in the
+        -- number of chunks takes more than 30 seconds.
+        let v = toIntermediateRep [1 .. 3000000 :: Int]
+            len = BSL.length (Json.encode v)
+        _ <- evaluate len
+        t0 <- getMonotonicTime
+        -- Force each byte, the stream may have lazy elements
+        let count n w = w `seq` n + 1
+        total <-
+            toBinStream v & Stream.fold (Fold.foldl' count (0 :: Int64))
+        t1 <- getMonotonicTime
+        assertEqual "length" len total
+        assertBool ("took " ++ show (t1 - t0) ++ " seconds") (t1 - t0 < 5)
 
     , test "rpcName is the module qualified endpoint name" $ do
         assertEqual "echoInt" "TestFunctions.echoInt" (rpcName echoInt)

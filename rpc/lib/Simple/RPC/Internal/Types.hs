@@ -78,6 +78,7 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Bifunctor
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Unsafe as BS.Unsafe
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Text.Encoding.Error as Text
@@ -86,7 +87,9 @@ import qualified Data.Text.Lazy.Encoding as TextL
 import qualified Data.Vector as Vector
 import qualified Streamly.Data.Array as Array
 import qualified Streamly.Data.Stream as Stream
-import qualified Streamly.Internal.Data.Array as Array (unsafePinnedAsPtr)
+import qualified Streamly.Data.Unfold as Unfold
+import qualified Streamly.Internal.Data.Array as Array
+    (fromPtrN, unsafePinnedAsPtr)
 import qualified Streamly.Unicode.Stream as Unicode
 
 --------------------------------------------------------------------------------
@@ -394,24 +397,29 @@ createObj kv = Json.object $ map (Data.Bifunctor.first Key.fromString) kv
 -- Conversions of IR
 --------------------------------------------------------------------------------
 
--- | Convert the Haskell representation of IR (i.e. Json) to a byte stream.
+-- | Convert the Haskell representation of IR (i.e. Json) to a byte stream of
+-- its JSON encoding.
+--
+-- The stream is generated from the chunks of the lazy encoding, the time is
+-- linear in the size of the encoding.
+{-# INLINE toBinStream #-}
 toBinStream :: Monad m => IntermediateRep -> Stream m Word8
 toBinStream input =
-    Stream.enumerateFromTo 0 (len - 1)
-        & fmap (BSL.index bsl)
+    Stream.fromList (BSL.toChunks (Json.encode input))
+        & Stream.unfoldEach (Unfold.lmap BS.unpack Unfold.fromList)
 
-    where
-    bsl = Json.encode input
-    len = BSL.length bsl
-
--- TODO: Convert Bytestring to Array directly
+-- | Copy a ByteString to an array.
+byteStringToArray :: BS.ByteString -> IO (Array Word8)
+byteStringToArray c =
+    BS.Unsafe.unsafeUseAsCStringLen c
+        $ \(p, n) -> Array.fromPtrN n (castPtr p)
 
 -- | Convert the Haskell representation of IR (i.e. Json) to a stream of
--- arrays.
-toChunkStream :: IntermediateRep -> Stream IO (Array.Array Word8)
+-- arrays of its JSON encoding, one array for each chunk of the lazy encoding.
+toChunkStream :: IntermediateRep -> Stream IO (Array Word8)
 toChunkStream input =
-    toBinStream input
-        & Array.chunksOf 1024
+    Stream.fromList (BSL.toChunks (Json.encode input))
+        & Stream.mapM byteStringToArray
 
 -- | Convert a byte stream of IR (i.e. Json) to its Haskell representation.
 fromBinStream :: Stream IO Word8 -> IO IntermediateRep
