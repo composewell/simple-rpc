@@ -14,7 +14,7 @@ import Data.Int (Int64)
 import Data.IORef (modifyIORef, newIORef, readIORef)
 import Data.List (isInfixOf, isPrefixOf, sort)
 import GHC.Clock (getMonotonicTime)
-import Streamly.Internal.System.Process (ProcessFailure(..))
+import Streamly.System.Process (ProcessFailure(..))
 import System.Directory
     ( copyFile, createDirectory, doesFileExist, executable, exeExtension
     , getPermissions )

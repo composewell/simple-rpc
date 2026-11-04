@@ -38,15 +38,15 @@ import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
 import Data.Function ((&))
 import Data.Word (Word8)
 import Streamly.Data.Array (Array)
-import Streamly.Internal.Unicode.String (str)
+import Streamly.Unicode.String (str)
 import System.FilePath (takeDirectory)
 
 import qualified Data.IORef as IORef
 import qualified Streamly.Internal.Data.Array as Array (compactEndByLn_)
 import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Data.Stream as Stream
-import qualified Streamly.Internal.System.Process as Proc
-import qualified Streamly.Internal.Unicode.Stream as Unicode
+import qualified Streamly.System.Process as Proc
+import qualified Streamly.Unicode.Stream as Unicode
 
 import Simple.RPC.Internal.Types
 

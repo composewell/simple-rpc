@@ -9,10 +9,11 @@ import Data.Maybe (fromJust, fromMaybe)
 import Streamly.Unicode.String (str)
 import System.FilePath ((</>))
 
-import qualified Streamly.Internal.Data.Parser as Parser
-import qualified Streamly.Internal.Data.Stream as Stream
+import qualified Streamly.Data.Parser as Parser
+import qualified Streamly.Data.Stream as Stream
+import qualified Streamly.Internal.Data.Stream as Stream (ordNub)
 import qualified Streamly.FileSystem.FileIO as File
-import qualified Streamly.Internal.FileSystem.Path as Path
+import qualified Streamly.FileSystem.Path as Path
 import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Unicode.Stream as Unicode
 

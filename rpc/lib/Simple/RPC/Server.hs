@@ -17,7 +17,7 @@ module Simple.RPC.Server
 
 import Control.Exception (throwIO)
 import Data.Function ((&))
-import Streamly.Internal.Unicode.String (str)
+import Streamly.Unicode.String (str)
 import System.Environment (getArgs)
 import System.IO
     (hSetEncoding, hSetNewlineMode, noNewlineTranslation, stdin, stdout, utf8)
