@@ -59,6 +59,7 @@ library
                     , bytestring
                     , vector
                     , filepath
+                    , text
                     , unordered-containers
     hs-source-dirs:   lib
 

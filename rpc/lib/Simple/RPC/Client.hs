@@ -40,6 +40,7 @@ import System.FilePath (takeDirectory)
 
 import qualified Data.IORef as IORef
 import qualified Streamly.Data.Array as Array
+import qualified Streamly.Internal.Data.Array as Array (compactEndByLn_)
 import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Data.Stream as Stream
 import qualified Streamly.Internal.System.Command as Cmd
@@ -87,6 +88,9 @@ versionGuard send mSshConf exe = do
 tracing :: (String -> IO ()) -> String -> String -> IO String
 tracing send tag val = send (showPair tag val) >> pure val
 
+traceLine :: (String -> IO ()) -> String -> Array Word8 -> IO (Array Word8)
+traceLine send tag val = send (showPair tag (decodeUtf8Array val)) >> pure val
+
 bufferLefts
     :: IORef.IORef [a] -> Stream.Stream IO (Either a b) -> Stream.Stream IO b
 bufferLefts ref inp =
@@ -127,9 +131,8 @@ pipe send using cmd input = do
         toChunkStream input
             & using cmd
             & bufferLefts errRef
-            & Unicode.decodeUtf8Chunks
-            & Stream.foldMany (Fold.takeEndBy_ (== '\n') Fold.toList)
-            & Stream.fold (Fold.lmapM (tracing send "STDOUT") Fold.latest)
+            & Array.compactEndByLn_
+            & Stream.fold (Fold.lmapM (traceLine send "STDOUT") Fold.latest)
 
     chunkBufferReversed <- IORef.readIORef errRef
     let errBuffer = reverse chunkBufferReversed
@@ -141,7 +144,11 @@ pipe send using cmd input = do
     case actionRes of
         Left (err :: SomeException) -> throwIO err
         Right Nothing -> throwIO EmptyOutput
-        Right (Just val) -> pure $ irFromString val
+        Right (Just val) -> do
+            r <- irFromArray val
+            case r of
+                Left err -> error $ "Unable to decode the output: " ++ err
+                Right x -> pure x
 
 -- XXX the remote call should be more seamless. We should be able to wrap any
 -- arbitrary code in runAt as long as its input and output are serializable.

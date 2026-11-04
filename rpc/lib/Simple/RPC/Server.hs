@@ -17,11 +17,10 @@ import Streamly.Internal.Unicode.String (str)
 import System.Environment (getArgs)
 import System.IO (stdout, stdin)
 
+import qualified Streamly.Data.Array as Array
 import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Data.Stream as Stream
-import qualified Streamly.FileSystem.Handle as FH hiding (read)
-import qualified Streamly.Internal.FileSystem.Handle as FH (read)
-import qualified Streamly.Unicode.Stream as Unicode
+import qualified Streamly.FileSystem.Handle as FH
 
 import Simple.RPC.Internal.Types
 
@@ -43,12 +42,16 @@ invokeFunction actions actionName =
             -- XXX we should not buffer the input, it should be directly
             -- streamed to the function, otherwise we cannot support
             -- infinite or large input.
-            inputString <-
+            inputBytes <-
                 FH.read stdin
-                    & Unicode.decodeUtf8'
-                    & Stream.fold (Fold.takeEndBy_ (== '\n') Fold.toList)
-            let input = irFromString inputString
+                    & Stream.fold (Fold.takeEndBy_ (== 10) Array.create)
+            let inputString = decodeUtf8Array inputBytes
             putStrLn $ showPair "SERVER" [str|#{actionName} #{inputString}|]
+            r <- irFromArray inputBytes
+            input <-
+                case r of
+                    Left err -> error $ "Unable to decode the input: " ++ err
+                    Right x -> pure x
             output <- actFun input
             putStrLn ""
             toBinStream output & Stream.fold (FH.write stdout)

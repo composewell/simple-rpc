@@ -9,8 +9,11 @@ module TestUtil
     , readFakeLog
     , clearFakeLog
     , writeScript
+    , utf8
+    , fakeServer
     , runServerRaw
     , genValue
+    , genUnicodeString
     ) where
 
 --------------------------------------------------------------------------------
@@ -31,13 +34,16 @@ import System.FilePath ((</>))
 import System.IO (hClose, hSetBinaryMode)
 import System.Posix.Process (getProcessID)
 import System.Process
-    ( CreateProcess(..), StdStream(..), createProcess, proc
-    , waitForProcess )
+    ( CreateProcess(std_err, std_in, std_out), StdStream(..), createProcess
+    , proc, waitForProcess )
 import Test.QuickCheck (Gen)
 
 import qualified Data.Aeson as Json
 import qualified Data.Aeson.Key as Key
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Builder as BSB
+import qualified Data.ByteString.Lazy as BSL
+import qualified System.Process as Process
 import qualified Test.QuickCheck as QC
 
 --------------------------------------------------------------------------------
@@ -120,6 +126,27 @@ writeScript path content = do
     p :: Permissions <- getPermissions path
     setPermissions path (setOwnerExecutable True p)
 
+-- | Encode a String as UTF-8.
+utf8 :: String -> BS.ByteString
+utf8 = BSL.toStrict . BSB.toLazyByteString . BSB.stringUtf8
+
+-- | @fakeServer env name version output@ creates a fake RPC server script
+-- named @name@ that prints @version@ when called without arguments.
+-- Otherwise it reads stdin and prints @output@ without a trailing newline.
+-- Returns the path of the script.
+fakeServer :: Env -> String -> String -> BS.ByteString -> IO FilePath
+fakeServer env name version output = do
+    let path = envDir env </> name
+        outFile = path ++ ".out"
+    BS.writeFile outFile output
+    writeScript path $ unlines
+        [ "#!/bin/sh"
+        , "if [ $# -eq 0 ]; then printf '%s' '" ++ version ++ "'; exit 0; fi"
+        , "cat > /dev/null"
+        , "cat '" ++ outFile ++ "'"
+        ]
+    pure path
+
 -- | Create the temporary directory and the fake commands, put the fake
 -- commands first in @PATH@ and make the child processes of the test
 -- executable run as the RPC server.
@@ -182,7 +209,7 @@ runServerRaw env extraEnv args input = do
                 { std_in = CreatePipe
                 , std_out = CreatePipe
                 , std_err = CreatePipe
-                , env = Just env1
+                , Process.env = Just env1
                 }
     (mIn, mOut, mErr, ph) <- createProcess cp
     case (mIn, mOut, mErr) of
@@ -229,3 +256,17 @@ genValue = QC.sized go
         , (\x -> Json.Number (fromIntegral x)) <$> (QC.arbitrary :: Gen Integer)
         , toJSON <$> (QC.arbitrary :: Gen String)
         ]
+
+-- | A Unicode string without the surrogate code points, which 'toJSON'
+-- replaces with U+FFFD.
+genUnicodeString :: Gen String
+genUnicodeString =
+    QC.listOf
+        $ QC.oneof
+            [ QC.arbitrary `QC.suchThat` notSurrogate
+            , QC.elements "\233\8594\128512\0\n\"\\"
+            ]
+
+    where
+
+    notSurrogate c = c < '\xD800' || c > '\xDFFF'

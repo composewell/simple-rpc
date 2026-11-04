@@ -304,6 +304,40 @@ installTests env =
     ]
 
 --------------------------------------------------------------------------------
+-- Unicode
+--------------------------------------------------------------------------------
+
+unicodeTests :: Env -> [Test]
+unicodeTests env =
+    [ test "invokeFunction decodes UTF-8 input" $ do
+        (code, out, err) <-
+            runServerRaw env [] ["TestFunctions.echoString"]
+                (utf8 "[\"T\233st\8594\"]")
+        assertEqual ("exit code, stderr: " ++ show err) ExitSuccess code
+        assertEqual "last line"
+            (utf8 "\"T\233st\8594\"") (last (BSC.lines out))
+
+    , test "runAt decodes a UTF-8 result" $ do
+        path <- fakeServer env "utf8-server" "1" (utf8 "\"T\233st\8594\"")
+        r <-
+            runAt
+                (serverConfig env & setImage (Executable path "1"))
+                echoString "x"
+        assertEqual "result" "T\233st\8594" r
+
+    , test "runAt round trips Unicode String arguments" $ do
+        let cfg = serverConfig env
+        property $ withMaxSuccess 20 $ forAll genUnicodeString $ \s ->
+            ioProperty $ (== s) <$> runAt cfg echoString s
+
+    , test "runAt logs the input as UTF-8 decoded text" $ do
+        (cfg, getLog) <- loggingConfig env
+        _ <- runAt cfg echoString "\233"
+        logged <- getLog
+        assertBool ("input: " ++ show logged) ("[\"\233\"]" `elem` logged)
+    ]
+
+--------------------------------------------------------------------------------
 -- Main
 --------------------------------------------------------------------------------
 
@@ -329,4 +363,5 @@ main = do
                     ++ configTests
                     ++ clientTests env
                     ++ installTests env
+                    ++ unicodeTests env
         runTests seed tests `finally` cleanupEnv env

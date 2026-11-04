@@ -24,8 +24,9 @@ module Simple.RPC.Internal.Types
     , toBinStream
     , toChunkStream
     , fromBinStream
-    , irFromString
+    , irFromArray
     , irToString
+    , decodeUtf8Array
 
     -- * Symbols
     , RpcEval(..)
@@ -62,20 +63,28 @@ module Simple.RPC.Internal.Types
 
 import Data.Aeson (ToJSON, FromJSON, toJSON, fromJSON)
 import Data.Function ((&))
+import Data.Functor.Identity (runIdentity)
 import Data.Vector ((!?))
 import Data.Word (Word8)
+import Foreign.Ptr (castPtr)
+import Streamly.Data.Array (Array)
 import Streamly.Data.Stream (Stream)
 
 import qualified Data.Aeson as Json
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Bifunctor
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
-import qualified Data.ByteString.Lazy.Char8 as BSLC
 import qualified Data.HashMap.Strict as HM
+import qualified Data.Text.Encoding.Error as Text
+import qualified Data.Text.Lazy as TextL
+import qualified Data.Text.Lazy.Encoding as TextL
 import qualified Data.Vector as Vector
 import qualified Streamly.Data.Array as Array
 import qualified Streamly.Data.Stream as Stream
+import qualified Streamly.Internal.Data.Array as Array (unsafePinnedAsPtr)
+import qualified Streamly.Unicode.Stream as Unicode
 
 --------------------------------------------------------------------------------
 -- Running Config
@@ -352,14 +361,23 @@ fromBinStream input = do
         Nothing -> error "Unable to decode"
         Just x -> pure x
 
--- | Convert the Latin1 Char String representation of IR (i.e. Json) to
--- its Haskell representation.
-irFromString :: String -> IntermediateRep
-irFromString input = do
-    case Json.decode $ BSLC.pack input of
-        Nothing -> error $ "Unable to decode: " ++ input
-        Just x -> x
+-- | Decode a UTF-8 encoded byte array to a String, replacing invalid bytes
+-- with the Unicode replacement character. Used for logging.
+decodeUtf8Array :: Array Word8 -> String
+decodeUtf8Array arr =
+    runIdentity $ Stream.toList $ Unicode.decodeUtf8 $ Array.read arr
 
--- | Convert the Haskell representation of IR (i.e. Json) to String.
+-- | Decode the UTF-8 encoded JSON representation of IR in a byte array.
+-- Returns the decoding error message on failure.
+irFromArray :: Array Word8 -> IO (Either String IntermediateRep)
+irFromArray arr = do
+    bs <-
+        Array.unsafePinnedAsPtr arr
+            $ \p n -> BS.packCStringLen (castPtr p, n)
+    pure $ Json.eitherDecodeStrict' bs
+
+-- | Convert the Haskell representation of IR (i.e. Json) to String. Used for
+-- logging.
 irToString :: IntermediateRep -> String
-irToString input = BSLC.unpack $ Json.encode input
+irToString input =
+    TextL.unpack $ TextL.decodeUtf8With Text.lenientDecode $ Json.encode input

@@ -16,7 +16,8 @@ module Harness
 --------------------------------------------------------------------------------
 
 import Control.Exception
-    (Exception, SomeException, displayException, evaluate, throwIO, try)
+    ( Exception, SomeException(..), displayException, evaluate, throwIO
+    , try )
 import Control.Monad (unless, when)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import System.Exit (exitFailure)
@@ -131,7 +132,8 @@ runTests seed tests = do
                 putStrLn
                     $ "  timed out after " ++ show testTimeout ++ " seconds"
                 pure (name, False)
-            Left (e :: SomeException) -> do
+            Left (SomeException e) -> do
+                -- displayException of SomeException adds the backtrace
                 putStrLn "FAIL"
                 putStrLn $ "  " ++ displayException e
                 pure (name, False)
