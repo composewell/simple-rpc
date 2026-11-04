@@ -4,6 +4,7 @@
 module Harness
     ( Test
     , test
+    , expectFailure
     , runTests
     , assertEqual
     , assertBool
@@ -94,11 +95,19 @@ property p = do
 -- Running
 -------------------------------------------------------------------------------
 
-data Test = Test String (IO ())
+data Test
+    = Test String (IO ())
+    | ExpectFailure String String (IO ())
 
 -- | A named test case.
 test :: String -> IO () -> Test
 test = Test
+
+-- | @expectFailure reason name action@ is a test case that fails because of
+-- a known defect described by @reason@. It is reported as XFAIL when it
+-- fails, and fails as XPASS when it passes, the defect is then fixed.
+expectFailure :: String -> String -> IO () -> Test
+expectFailure reason name = ExpectFailure name reason
 
 -- | Seconds after which a test is reported as failed.
 testTimeout :: Int
@@ -121,19 +130,35 @@ runTests seed tests = do
 
     where
 
-    runOne (Test name action) = do
+    run name action = do
         putStr (name ++ " ... ")
         hFlush stdout
         r <- try (timeout (testTimeout * 1000000) action)
+        pure $ case r of
+            Right (Just ()) -> Nothing
+            Right Nothing ->
+                Just $ "timed out after " ++ show testTimeout ++ " seconds"
+            -- displayException of SomeException adds the backtrace
+            Left (SomeException e) -> Just (displayException e)
+
+    runOne (Test name action) = do
+        r <- run name action
         case r of
-            Right (Just ()) -> putStrLn "OK" >> pure (name, True)
-            Right Nothing -> do
+            Nothing -> putStrLn "OK" >> pure (name, True)
+            Just err -> do
                 putStrLn "FAIL"
-                putStrLn
-                    $ "  timed out after " ++ show testTimeout ++ " seconds"
+                putStrLn $ "  " ++ err
                 pure (name, False)
-            Left (SomeException e) -> do
-                -- displayException of SomeException adds the backtrace
-                putStrLn "FAIL"
-                putStrLn $ "  " ++ displayException e
+
+    runOne (ExpectFailure name reason action) = do
+        r <- run name action
+        case r of
+            Nothing -> do
+                putStrLn "XPASS"
+                putStrLn $ "  expected to fail: " ++ reason
                 pure (name, False)
+            Just err -> do
+                putStrLn "XFAIL"
+                putStrLn $ "  " ++ reason
+                putStrLn $ "  " ++ err
+                pure (name, True)

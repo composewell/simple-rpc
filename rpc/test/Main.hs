@@ -13,7 +13,7 @@ import Data.Function ((&))
 import Data.Functor.Identity (runIdentity)
 import Data.Int (Int64)
 import Data.IORef (modifyIORef, newIORef, readIORef)
-import Data.List (isPrefixOf, sort)
+import Data.List (isInfixOf, isPrefixOf, sort)
 import GHC.Clock (getMonotonicTime)
 import Numeric (showOct)
 import Streamly.Internal.System.Process (ProcessFailure(..))
@@ -324,6 +324,41 @@ clientTests env =
     , test "runAt raises ProcessFailure when the endpoint fails" $
         assertThrows "failing" (\(ProcessFailure n) -> n == 1)
             (runAt (serverConfig env) failing 1)
+
+    , expectFailure
+        "streamly-process 0.4.1 writes stdin after the process exits"
+        "runAt raises ProcessFailure when the server ignores the input" $ do
+        -- The input is larger than the pipe buffer
+        let path = envDir env </> "exit3-server"
+        writeScript path $ unlines
+            [ "#!/bin/sh"
+            , "if [ $# -eq 0 ]; then printf 1; exit 0; fi"
+            , "exit 3"
+            ]
+        assertThrows "exit 3" (\(ProcessFailure n) -> n == 3)
+            (runAt
+                (serverConfig env & setImage (Executable path "1"))
+                echoString (replicate 1000000 'x'))
+
+    , test "runAt raises ProcessFailure for an unknown endpoint" $ do
+        -- A server that does not have the endpoint, the input is larger
+        -- than the pipe buffer.
+        let path = envDir env </> "unknown-endpoint-server"
+        writeScript path $ unlines
+            [ "#!/bin/sh"
+            , "[ $# -eq 0 ] && exec '" ++ envExe env ++ "'"
+            , "exec '" ++ envExe env ++ "' TestFunctions.nope"
+            ]
+        (cfg, getLog) <- loggingConfig env
+        assertThrows "unknown" (\(ProcessFailure n) -> n == 1)
+            (runAt
+                (cfg & setImage (Executable path testVersion))
+                echoString (replicate 1000000 'x'))
+        logged <- getLog
+        let msg = displayException (EndpointNotFound "TestFunctions.nope")
+            isErr l = "[STDERR]" `isPrefixOf` l
+        assertBool ("stderr logged: " ++ show (filter isErr logged))
+            (any (\l -> isErr l && msg `isInfixOf` l) logged)
 
     , test "runAt raises VersionMismatch on a version mismatch" $
         assertThrows "version"

@@ -277,7 +277,7 @@ genValue = QC.sized go
     leaves =
         [ pure Json.Null
         , Json.Bool <$> QC.arbitrary
-        , (\x -> Json.Number (fromIntegral x)) <$> (QC.arbitrary :: Gen Integer)
+        , Json.Number . fromIntegral <$> (QC.arbitrary :: Gen Integer)
         , toJSON <$> (QC.arbitrary :: Gen String)
         ]
 

@@ -42,17 +42,19 @@ import Simple.RPC.Internal.Types
 -- Raise an 'EndpointNotFound' exception if the map does not have the
 -- function, and an 'InvalidInput' exception if the input is not valid JSON.
 invokeFunction :: RpcMap IntermediateRep -> String -> IO ()
-invokeFunction actions actionName =
+invokeFunction actions actionName = do
+    -- XXX we should not buffer the input, it should be directly streamed to
+    -- the function, otherwise we cannot support infinite or large input.
+
+    -- Read the input before raising an exception for an unknown endpoint. A
+    -- client writing the input to a process that has exited gets a broken
+    -- pipe error instead of the exit code of the process.
+    inputBytes <-
+        FH.read stdin & Stream.fold (Fold.takeEndBy_ (== 10) Array.create)
     case lookupRpcSymbol actionName actions of
         Nothing -> throwIO (EndpointNotFound actionName)
         Just actFun -> do
             hSetEncoding stdout utf8
-            -- XXX we should not buffer the input, it should be directly
-            -- streamed to the function, otherwise we cannot support
-            -- infinite or large input.
-            inputBytes <-
-                FH.read stdin
-                    & Stream.fold (Fold.takeEndBy_ (== 10) Array.create)
             let inputString = decodeUtf8Array inputBytes
             putStrLn $ showPair "SERVER" [str|#{actionName} #{inputString}|]
             r <- irFromArray inputBytes

@@ -217,6 +217,12 @@ with (RunningConfig{..}) actionName input = do
 -- * an 'EmptyOutput' exception if the server does not print an output line,
 -- * an 'InvalidOutput' exception if the last output line of the server is not
 -- the JSON encoding of the result type.
+--
+-- With streamly-process 0.4.1, if the server process exits before it reads
+-- all of the input and the input is larger than the pipe buffer, the call
+-- raises an 'IOError' for the broken pipe instead of the
+-- 'Streamly.Internal.System.Process.ProcessFailure' exception. The server reads the whole input before it raises an exception
+-- for an unknown endpoint.
 runAt :: RunningConfig -> RpcSymbol IntermediateRep typ -> typ
 runAt cfg sym = call sym (with cfg)
 
