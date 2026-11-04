@@ -185,7 +185,7 @@ with (RunningConfig{..}) actionName input = do
               maybe id sshCommand rcRemote
             $ userWrapper rcUser
             $ sudoWrapper rcSudo
-            (executablePath rcImage, [actionName])
+            (executablePath rcImage, words rcImageFlags ++ [actionName])
     send $ showPair "ACT" actionName
     pipe send exe args input
 

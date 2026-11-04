@@ -338,6 +338,29 @@ clientTests env =
             -- Do not force the result
             Right _ -> assertBool "runAt returned without an exception" False
 
+    , test "runAt passes the setImageFlags flags to the executable" $ do
+        let wrapper = envDir env </> "flags-server"
+            argsFile = envDir env </> "flags-server.args"
+        writeScript wrapper $ unlines
+            [ "#!/bin/sh"
+            , "{ echo call; printf '%s\\n' \"$@\"; } >> '" ++ argsFile ++ "'"
+            , "exec '" ++ envExe env ++ "' \"$@\""
+            ]
+        let cfg =
+                serverConfig env
+                    & setImage (Executable wrapper testVersion)
+                    & setImageFlags "+RTS  -A2m\t-RTS "
+        r <- runAt cfg add 2 3
+        assertEqual "add" 5 r
+        calls <- lines <$> readFile argsFile
+        -- printf prints an empty line for the version check, which has
+        -- no arguments.
+        assertEqual "arguments"
+            [ "call", ""
+            , "call", "+RTS", "-A2m", "-RTS", "TestFunctions.add"
+            ]
+            calls
+
     , test "runAt with setUser runs the endpoint through sudo su" $ do
         clearFakeLog env
         r <- runAt (serverConfig env & setUser "rpcuser") add 2 3

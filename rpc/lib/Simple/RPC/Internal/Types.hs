@@ -184,7 +184,13 @@ defaultConfig exe =
 setImage :: Executable -> RunningConfig -> RunningConfig
 setImage x rc = rc { rcImage = x }
 
--- | Use these flags when invoking the RPC server image.
+-- | Use these flags when invoking the RPC server image for an endpoint call.
+-- The flags are split into words at white space, a word cannot contain white
+-- space or quotes. The version check invokes the image without the flags.
+--
+-- The server accepts one argument, the endpoint name, therefore the flags
+-- can only be options that the server program does not see, e.g. GHC RTS
+-- options @+RTS -N -RTS@ if the server is linked with @-rtsopts@.
 --
 -- Default is "" i.e. no flags.
 setImageFlags :: String -> RunningConfig -> RunningConfig
