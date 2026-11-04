@@ -8,5 +8,6 @@ exeVersion = "0.1.1"
 remoteExe :: Executable
 remoteExe = Executable "/opt/ssh-rpc/test" exeVersion
 
-localhost :: SSHConfig
+-- | (user@host, port)
+localhost :: (String, String)
 localhost = ("user@localhost", "22")

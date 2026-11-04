@@ -10,8 +10,7 @@ import qualified Module1 as Module1
 import qualified Module2 as Module2
 
 import Module0
-import Simple.RPC.Client
-import Simple.RPC.Server
+import Simple.RPC
 
 helloWorld' :: IO ()
 helloWorld' = do
@@ -23,11 +22,11 @@ raw_bottom = do
     exePath <- getExecutablePath
     let exe = Executable exePath exeVersion
     val <-
-        call
-            Module1.printFromModule1
-            (with (exec exe & asUser "user")) 5 "Hello" False
+        runAt
+            (defaultConfig exe & setUser "user")
+            Module1.printFromModule1 5 "Hello" False
     print val
-    call
-        Module2.printFromModule2
-        (with (exec remoteExe & onSSH localhost))  "World"
+    runAt
+        (defaultConfig remoteExe & setRemote localhost)
+        Module2.printFromModule2 "World"
 $(rpcExport "raw_bottom" "bottom")

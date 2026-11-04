@@ -2,7 +2,7 @@ module Module2
     ( printFromModule2
     ) where
 
-import Simple.RPC.Server
+import Simple.RPC
 import qualified Module1 as Module1
 
 raw_printFromModule2 :: String -> IO ()
