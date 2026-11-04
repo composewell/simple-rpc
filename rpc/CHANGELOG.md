@@ -26,7 +26,8 @@ can break existing callers:
   directory. Before, the directory was made writable by all users and the
   file was owned by the ssh user. It needs `mktemp` and `install` on the
   remote host.
-* The server sets the encoding of stdout to UTF-8.
+* The server sets the encoding of stdout to UTF-8, and writes `\n` line
+  ends on all OSes. Before, it wrote `\r\n` on Windows.
 
 ### Additions
 

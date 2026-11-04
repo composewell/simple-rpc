@@ -19,7 +19,8 @@ import Control.Exception (throwIO)
 import Data.Function ((&))
 import Streamly.Internal.Unicode.String (str)
 import System.Environment (getArgs)
-import System.IO (hSetEncoding, stdin, stdout, utf8)
+import System.IO
+    (hSetEncoding, hSetNewlineMode, noNewlineTranslation, stdin, stdout, utf8)
 
 import qualified Streamly.Data.Array as Array
 import qualified Streamly.Data.Fold as Fold
@@ -31,6 +32,13 @@ import Simple.RPC.Internal.Types
 -------------------------------------------------------------------------------
 -- Utils
 -------------------------------------------------------------------------------
+
+-- | Write stdout as UTF-8 with @\\n@ line ends, independent of the locale
+-- and the OS. Without this, GHC writes @\\r\\n@ for @\\n@ on Windows.
+setStdoutMode :: IO ()
+setStdoutMode = do
+    hSetEncoding stdout utf8
+    hSetNewlineMode stdout noNewlineTranslation
 
 -- XXX To reduce execution delays we should have this running as a server. Or
 -- at least make sure the executable is not swapped out.
@@ -52,7 +60,8 @@ import Simple.RPC.Internal.Types
 -- The client takes the last line of the output as the result.
 --
 -- The encoding of stdout is set to UTF-8, the client decodes the output as
--- UTF-8 independent of the locale of the server.
+-- UTF-8 independent of the locale of the server. A newline is written as
+-- @\\n@ on all OSes, including Windows.
 --
 -- Raise an 'EndpointNotFound' exception if the map does not have the
 -- function, and an 'InvalidInput' exception if the input is not valid JSON or
@@ -74,7 +83,7 @@ invokeFunction actions actionName = do
     case lookupRpcSymbol actionName actions of
         Nothing -> throwIO (EndpointNotFound actionName)
         Just actFun -> do
-            hSetEncoding stdout utf8
+            setStdoutMode
             let inputString = decodeUtf8Array inputBytes
             putStrLn $ showPair "SERVER" [str|#{actionName} #{inputString}|]
             r <- irFromArray inputBytes
@@ -108,6 +117,6 @@ mainWith :: String -> RpcMap IntermediateRep -> IO ()
 mainWith version actions = do
     args <- getArgs
     case args of
-        [] -> hSetEncoding stdout utf8 >> putStr version
+        [] -> setStdoutMode >> putStr version
         [actName] -> invokeFunction actions actName
         _ -> throwIO (InvalidUsage args)
