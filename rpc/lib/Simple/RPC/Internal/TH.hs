@@ -82,9 +82,9 @@ rpcExport oldFuncName newFuncName = do
         runningExp =
             lamE
                 (varP n_runner:patArgs)
-                [|fromIntermediateRep
-                     <$> $(varE n_runner)
-                             $(stringE endpointWithMod) $(encodedInput)|]
+                [|$(varE n_runner)
+                     $(stringE endpointWithMod) $(encodedInput)
+                     >>= resultFromIR|]
 
     let rpcSymbolExp =
             [|RpcSymbol

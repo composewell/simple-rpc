@@ -6,7 +6,7 @@ module Main (main) where
 -- Imports
 -------------------------------------------------------------------------------
 
-import Control.Exception (displayException, finally)
+import Control.Exception (displayException, finally, try)
 import Data.Function ((&))
 import Data.Functor.Identity (runIdentity)
 import Data.IORef (modifyIORef, newIORef, readIORef)
@@ -321,6 +321,19 @@ clientTests env =
             (runAt
                 (serverConfig env & setImage (Executable path "1"))
                 echoInt 1)
+
+    , test "runAt decodes the result before it returns" $ do
+        path <- fakeServer env "string-server" "1" "\"not an Int\""
+        r <-
+            try
+                $ runAt
+                    (serverConfig env & setImage (Executable path "1"))
+                    echoInt 1
+        case r of
+            Left (InvalidOutput _) -> pure ()
+            Left e -> assertBool ("unexpected exception: " ++ show e) False
+            -- Do not force the result
+            Right _ -> assertBool "runAt returned without an exception" False
 
     , test "runAt with setUser runs the endpoint through sudo su" $ do
         clearFakeLog env

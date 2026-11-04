@@ -9,7 +9,7 @@ module Simple.RPC.Internal.Types
     ( -- * Intermediate Representation (IR)
       IntermediateRep
     , toIntermediateRep
-    , fromIntermediateRep
+    , resultFromIR
 
     -- ** IR Arrays
     , createArr
@@ -322,11 +322,13 @@ type IntermediateRep = Json.Value
 toIntermediateRep :: ToJSON a => a -> IntermediateRep
 toIntermediateRep = toJSON
 
-fromIntermediateRep :: FromJSON a => IntermediateRep -> a
-fromIntermediateRep val =
+-- | Decode the result of an endpoint from IR. Raise an 'InvalidOutput'
+-- exception if the IR cannot be decoded to the required type.
+resultFromIR :: FromJSON a => IntermediateRep -> IO a
+resultFromIR val =
     case fromJSON val of
-        Json.Error err -> error err
-        Json.Success a -> a
+        Json.Error err -> throwIO $ InvalidOutput err
+        Json.Success a -> pure a
 
 --------------------------------------------------------------------------------
 -- Arrays in IR
@@ -371,7 +373,10 @@ createArr = Json.Array . Vector.fromList
 objLookup :: FromJSON a => IntermediateRep -> String -> a
 objLookup (Json.Object obj) kStr =
     case KeyMap.lookup (Key.fromString kStr) obj of
-        Just val -> fromIntermediateRep val
+        Just val ->
+            case fromJSON val of
+                Json.Error err -> error err
+                Json.Success a -> a
         Nothing -> error $ "Could not find: " ++ kStr
 objLookup _ _ = error "Value is not an object type"
 
