@@ -5,6 +5,7 @@ module Harness
     ( Test
     , test
     , expectFailure
+    , skipIf
     , runTests
     , assertEqual
     , assertBool
@@ -98,6 +99,7 @@ property p = do
 data Test
     = Test String (IO ())
     | ExpectFailure String String (IO ())
+    | Skip String String
 
 -- | A named test case.
 test :: String -> IO () -> Test
@@ -108,6 +110,16 @@ test = Test
 -- fails, and fails as XPASS when it passes, the defect is then fixed.
 expectFailure :: String -> String -> IO () -> Test
 expectFailure reason name = ExpectFailure name reason
+
+testName :: Test -> String
+testName (Test name _) = name
+testName (ExpectFailure name _ _) = name
+testName (Skip name _) = name
+
+-- | @skipIf cond reason t@ does not run the test case @t@ if @cond@ is true,
+-- and reports it as SKIP with @reason@.
+skipIf :: Bool -> String -> Test -> Test
+skipIf cond reason t = if cond then Skip (testName t) reason else t
 
 -- | Seconds after which a test is reported as failed.
 testTimeout :: Int
@@ -120,11 +132,13 @@ runTests seed tests = do
     writeIORef seedRef seed
     putStrLn $ "QuickCheck seed: " ++ show seed
     results <- mapM runOne tests
-    let failed = [name | (name, False) <- results]
+    let failed = [name | (name, Just False) <- results]
+        skipped = [name | (name, Nothing) <- results]
     putStrLn ""
     putStrLn
-        $ show (length tests - length failed) ++ " passed, "
-            ++ show (length failed) ++ " failed"
+        $ show (length tests - length failed - length skipped) ++ " passed, "
+            ++ show (length failed) ++ " failed, "
+            ++ show (length skipped) ++ " skipped"
     mapM_ (putStrLn . ("FAILED: " ++)) failed
     when (not (null failed)) exitFailure
 
@@ -144,11 +158,11 @@ runTests seed tests = do
     runOne (Test name action) = do
         r <- run name action
         case r of
-            Nothing -> putStrLn "OK" >> pure (name, True)
+            Nothing -> putStrLn "OK" >> pure (name, Just True)
             Just err -> do
                 putStrLn "FAIL"
                 putStrLn $ "  " ++ err
-                pure (name, False)
+                pure (name, Just False)
 
     runOne (ExpectFailure name reason action) = do
         r <- run name action
@@ -156,9 +170,14 @@ runTests seed tests = do
             Nothing -> do
                 putStrLn "XPASS"
                 putStrLn $ "  expected to fail: " ++ reason
-                pure (name, False)
+                pure (name, Just False)
             Just err -> do
                 putStrLn "XFAIL"
                 putStrLn $ "  " ++ reason
                 putStrLn $ "  " ++ err
-                pure (name, True)
+                pure (name, Just True)
+
+    runOne (Skip name reason) = do
+        putStrLn $ name ++ " ... SKIP"
+        putStrLn $ "  " ++ reason
+        pure (name, Nothing)

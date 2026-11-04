@@ -8,7 +8,6 @@ module TestUtil
     , serverMode
     , readFakeLog
     , clearFakeLog
-    , writeScript
     , utf8
     , fakeServer
     , runServerRaw
@@ -22,22 +21,20 @@ module TestUtil
 
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
-import Control.Exception (IOException, catch, evaluate)
+import Control.Exception (IOException, catch)
 import Control.Monad (forM_, when)
 import Data.Aeson (Value, toJSON)
 import System.Directory
-    ( Permissions, createDirectory, findExecutable, getCurrentDirectory
-    , getPermissions, getTemporaryDirectory, removeDirectoryRecursive
-    , setCurrentDirectory, setOwnerExecutable, setPermissions )
+    ( createDirectory, findExecutable, getCurrentDirectory
+    , getTemporaryDirectory, removeDirectoryRecursive, setCurrentDirectory )
 import System.Environment
     (getEnvironment, getExecutablePath, lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode)
-import System.FilePath ((</>))
+import System.FilePath (searchPathSeparator, (</>))
 import System.IO (hClose, hSetBinaryMode)
-import System.Posix.Process (getProcessID)
 import System.Process
     ( CreateProcess(std_err, std_in, std_out), StdStream(..), createProcess
-    , proc, waitForProcess )
+    , getCurrentPid, proc, waitForProcess )
 import Test.QuickCheck (Gen)
 
 import qualified Data.Aeson as Json
@@ -47,6 +44,8 @@ import qualified Data.ByteString.Builder as BSB
 import qualified Data.ByteString.Lazy as BSL
 import qualified System.Process as Process
 import qualified Test.QuickCheck as QC
+
+import Fake
 
 -------------------------------------------------------------------------------
 -- Environment
@@ -65,90 +64,19 @@ data Env =
         , envFakeLog :: FilePath -- ^ invocations of the fake commands
         }
 
-fakeSsh :: String
-fakeSsh = unlines
-    [ "#!/bin/sh"
-    , "# Run the remote command with sh in $SIMPLE_RPC_FAKE_HOME."
-    , logArgs "ssh"
-    , "while [ $# -gt 0 ]; do"
-    , "    case \"$1\" in"
-    , "        -T) shift ;;"
-    , "        -p|-o) shift 2 ;;"
-    , "        -*) echo \"fake ssh: unsupported option $1\" >&2; exit 255 ;;"
-    , "        *) break ;;"
-    , "    esac"
-    , "done"
-    , "shift"
-    , "cd \"$SIMPLE_RPC_FAKE_HOME\" || exit 255"
-    , "exec sh -c \"$*\""
-    ]
-
-fakeScp :: String
-fakeScp = unlines
-    [ "#!/bin/sh"
-    , "# scp -P PORT SRC HOST:DST, copy locally."
-    , logArgs "scp"
-    , "[ \"$1\" = \"-P\" ] && shift 2"
-    , "src=$1"
-    , "dst=${2#*:}"
-    , "case \"$dst\" in"
-    , "    /*) ;;"
-    , "    *) dst=\"$SIMPLE_RPC_FAKE_HOME/$dst\" ;;"
-    , "esac"
-    , "exec cp \"$src\" \"$dst\""
-    ]
-
-fakeSudo :: String
-fakeSudo = unlines
-    [ "#!/bin/sh"
-    , logArgs "sudo"
-    , "[ \"$1\" = \"--\" ] && shift"
-    , "exec \"$@\""
-    ]
-
-fakeSu :: String
-fakeSu = unlines
-    [ "#!/bin/sh"
-    , "# su USER -c CMD"
-    , logArgs "su"
-    , "[ \"$2\" = \"-c\" ] || { echo \"fake su: usage\" >&2; exit 1; }"
-    , "exec sh -c \"$3\""
-    ]
-
--- | Shell code to append the command name and its arguments, each in
--- brackets, as a line to the fake log.
-logArgs :: String -> String
-logArgs name =
-    "{ printf '" ++ name ++ "'; for a in \"$@\"; do printf ' [%s]' \"$a\"; \
-    \done; echo; } >> \"$SIMPLE_RPC_FAKE_LOG\""
-
--- | Write an executable script.
-writeScript :: FilePath -> String -> IO ()
-writeScript path content = do
-    writeFile path content
-    p :: Permissions <- getPermissions path
-    setPermissions path (setOwnerExecutable True p)
-
 -- | Encode a String as UTF-8.
 utf8 :: String -> BS.ByteString
 utf8 = BSL.toStrict . BSB.toLazyByteString . BSB.stringUtf8
 
--- | @fakeServer env name version output@ creates a fake RPC server script
--- named @name@ that prints @version@ when called without arguments.
--- Otherwise it reads stdin and prints @output@ without a trailing newline.
--- Returns the path of the script.
+-- | @fakeServer env name version output@ creates a fake RPC server named
+-- @name@ that prints @version@ when called without arguments. Otherwise it
+-- reads stdin and prints @output@. Returns the path of the server.
 fakeServer :: Env -> String -> String -> BS.ByteString -> IO FilePath
 fakeServer env name version output = do
     let path = envDir env </> name
         outFile = path ++ ".out"
     BS.writeFile outFile output
-    writeScript path $ unlines
-        [ "#!/bin/sh"
-        , "if [ $# -eq 0 ]; then printf '%s' '" ++ version ++ "'; exit 0; fi"
-        , "cat > /dev/null"
-        , "cat '" ++ outFile ++ "'"
-        ]
-    pure path
+    installFake (envExe env) path (FakeServer version outFile)
 
 -- | Create the temporary directory and the fake commands, put the fake
 -- commands first in @PATH@, make the temporary directory the working
@@ -166,7 +94,7 @@ setupEnv :: IO Env
 setupEnv = do
     origDir <- getCurrentDirectory
     tmp <- getTemporaryDirectory
-    pid <- getProcessID
+    pid <- getCurrentPid
     exe <- getExecutablePath
     let dir = tmp </> ("simple-rpc-test-" ++ show pid)
         bin = dir </> "bin"
@@ -176,23 +104,25 @@ setupEnv = do
     createDirectory bin
     createDirectory home
     writeFile logFile ""
-    writeScript (bin </> "ssh") fakeSsh
-    writeScript (bin </> "scp") fakeScp
-    writeScript (bin </> "sudo") fakeSudo
-    writeScript (bin </> "su") fakeSu
+    fakes <-
+        mapM
+            (\(cmd, fake) -> (cmd,) <$> installFake exe (bin </> cmd) fake)
+            [ ("ssh", FakeSsh), ("scp", FakeScp)
+            , ("sudo", FakeSudo), ("su", FakeSu)
+            ]
     path <- maybe "" id <$> lookupEnv "PATH"
-    setEnv "PATH" (bin ++ ":" ++ path)
+    setEnv "PATH" (bin ++ searchPathSeparator : path)
     setEnv "SIMPLE_RPC_FAKE_HOME" home
     setEnv "SIMPLE_RPC_FAKE_LOG" logFile
     uncurry setEnv serverMode
     -- Used in a test path, must expand to an empty string
     unsetEnv "SIMPLE_RPC_UNSET"
-    forM_ ["ssh", "scp", "sudo", "su"] $ \cmd -> do
+    forM_ fakes $ \(cmd, fakeExe) -> do
         found <- findExecutable cmd
-        when (found /= Just (bin </> cmd))
+        when (found /= Just fakeExe)
             $ ioError $ userError
             $ "setupEnv: PATH finds " ++ show found ++ " for " ++ cmd
-                ++ ", not the fake " ++ show (bin </> cmd)
+                ++ ", not the fake " ++ show fakeExe
     setCurrentDirectory dir
     pure $ Env dir origDir exe logFile
 
@@ -203,13 +133,10 @@ cleanupEnv env = do
 
 -- | The lines of the fake command log.
 readFakeLog :: Env -> IO [String]
-readFakeLog env = do
-    s <- readFile (envFakeLog env)
-    _ <- evaluate (length s)
-    pure (lines s)
+readFakeLog env = lines <$> readFileFs (envFakeLog env)
 
 clearFakeLog :: Env -> IO ()
-clearFakeLog env = writeFile (envFakeLog env) ""
+clearFakeLog env = writeFileFs (envFakeLog env) ""
 
 -------------------------------------------------------------------------------
 -- Server process

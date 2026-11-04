@@ -8,26 +8,24 @@ module Main (main) where
 
 import Control.Exception (displayException, evaluate, finally, try)
 import Control.Monad (unless)
-import Data.Bits ((.&.))
 import Data.Function ((&))
 import Data.Functor.Identity (runIdentity)
 import Data.Int (Int64)
 import Data.IORef (modifyIORef, newIORef, readIORef)
 import Data.List (isInfixOf, isPrefixOf, sort)
 import GHC.Clock (getMonotonicTime)
-import Numeric (showOct)
 import Streamly.Internal.System.Process (ProcessFailure(..))
 import System.Directory
-    ( createDirectory, createFileLink, doesFileExist, executable
+    ( copyFile, createDirectory, doesFileExist, executable, exeExtension
     , getPermissions )
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (ExitCode(..))
-import System.FilePath ((</>))
+import System.FilePath ((<.>), (</>))
 import System.IO (hClose, hPutStr)
-import System.Posix.Files (fileMode, getFileStatus, setFileMode)
+import System.Info (os)
 import System.Process
-    ( CreateProcess(std_in, std_out), StdStream(..), createProcess, proc
-    , waitForProcess )
+    ( CreateProcess(std_in, std_out), StdStream(..), callProcess
+    , createProcess, proc, readProcess, waitForProcess )
 import Test.QuickCheck (forAll, ioProperty, withMaxSuccess)
 
 import qualified Data.Aeson as Json
@@ -39,6 +37,7 @@ import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Data.Stream as Stream
 import qualified Test.QuickCheck as QC
 
+import Fake
 import Harness
 import Simple.RPC
 import TestFunctions
@@ -76,6 +75,21 @@ assertInvalidInput err =
 -- | Print-able ASCII characters and the control characters.
 asciiString :: QC.Gen String
 asciiString = QC.listOf (QC.choose ('\0', '\127'))
+
+isWindows :: Bool
+isWindows = os == "mingw32"
+
+-- | The permission bits of a file as shown by @ls -l@, e.g. @rwxr-xr-x@.
+-- Uses @sh@ for the same view of the file system as the fake ssh.
+lsMode :: FilePath -> IO String
+lsMode path = do
+    out <- readProcess "sh" ["-c", "ls -ld \"$1\"", "sh", path] ""
+    pure $ take 9 $ drop 1 out
+
+-- | Set the mode of a file to an octal mode such as @755@, using @sh@.
+chmodSh :: String -> FilePath -> IO ()
+chmodSh mode path =
+    callProcess "sh" ["-c", "chmod " ++ mode ++ " \"$1\"", "sh", path]
 
 -------------------------------------------------------------------------------
 -- Simple.RPC.Common
@@ -347,12 +361,9 @@ clientTests env =
         "streamly-process 0.4.1 writes stdin after the process exits"
         "runAt raises ProcessFailure when the server ignores the input" $ do
         -- The input is larger than the pipe buffer
-        let path = envDir env </> "exit3-server"
-        writeScript path $ unlines
-            [ "#!/bin/sh"
-            , "if [ $# -eq 0 ]; then printf 1; exit 0; fi"
-            , "exit 3"
-            ]
+        path <-
+            installFake (envExe env) (envDir env </> "exit3-server")
+                (ExitServer "1" 3)
         assertThrows "exit 3" (\(ProcessFailure n) -> n == 3)
             (runAt
                 (serverConfig env & setImage (Executable path "1"))
@@ -361,12 +372,9 @@ clientTests env =
     , test "runAt raises ProcessFailure for an unknown endpoint" $ do
         -- A server that does not have the endpoint, the input is larger
         -- than the pipe buffer.
-        let path = envDir env </> "unknown-endpoint-server"
-        writeScript path $ unlines
-            [ "#!/bin/sh"
-            , "[ $# -eq 0 ] && exec '" ++ envExe env ++ "'"
-            , "exec '" ++ envExe env ++ "' TestFunctions.nope"
-            ]
+        path <-
+            installFake (envExe env) (envDir env </> "unknown-endpoint-server")
+                (ArgsServer (envExe env) ["TestFunctions.nope"])
         (cfg, getLog) <- loggingConfig env
         assertThrows "unknown" (\(ProcessFailure n) -> n == 1)
             (runAt
@@ -417,24 +425,20 @@ clientTests env =
             Right _ -> assertBool "runAt returned without an exception" False
 
     , test "runAt passes the setImageFlags flags to the executable" $ do
-        let wrapper = envDir env </> "flags-server"
-            argsFile = envDir env </> "flags-server.args"
-        writeScript wrapper $ unlines
-            [ "#!/bin/sh"
-            , "{ echo call; printf '%s\\n' \"$@\"; } >> '" ++ argsFile ++ "'"
-            , "exec '" ++ envExe env ++ "' \"$@\""
-            ]
+        let argsFile = envDir env </> "flags-server.args"
+        wrapper <-
+            installFake (envExe env) (envDir env </> "flags-server")
+                (RecordServer (envExe env) argsFile)
         let cfg =
                 serverConfig env
                     & setImage (Executable wrapper testVersion)
                     & setImageFlags "+RTS  -A2m\t-RTS "
         r <- runAt cfg add 2 3
         assertEqual "add" 5 r
-        calls <- lines <$> readFile argsFile
-        -- printf prints an empty line for the version check, which has
-        -- no arguments.
+        calls <- lines <$> readFileFs argsFile
+        -- The first call is the version check, without arguments
         assertEqual "arguments"
-            [ "call", ""
+            [ "call"
             , "call", "+RTS", "-A2m", "-RTS", "TestFunctions.add"
             ]
             calls
@@ -500,7 +504,7 @@ installTests env =
         let destDir = envDir env </> "install2"
             dest = destDir </> "server"
         createDirectory destDir
-        setFileMode destDir 0o755
+        chmodSh "755" destDir
         clearFakeLog env
         installOnRemote
             (Executable (envExe env) testVersion) ("u@h", "22") dest
@@ -513,10 +517,10 @@ installTests env =
                 tmpExists <- doesFileExist tmp
                 assertBool ("temporary file removed: " ++ tmp) (not tmpExists)
             other -> assertBool ("one scp call: " ++ show other) False
-        dirMode <- fileMode <$> getFileStatus destDir
-        assertEqual "directory mode" "755" (showOct (dirMode .&. 0o777) "")
-        exeMode <- fileMode <$> getFileStatus dest
-        assertEqual "executable mode" "755" (showOct (exeMode .&. 0o777) "")
+        dirMode <- lsMode destDir
+        assertEqual "directory mode" "rwxr-xr-x" dirMode
+        exeMode <- lsMode dest
+        assertEqual "executable mode" "rwxr-xr-x" exeMode
 
     , test "installOnRemote with special characters in the path" $ do
         let dest = envDir env </> "install3" </> specialDirName </> "srv"
@@ -553,8 +557,14 @@ installTests env =
 -- 'setupEnv' sets to the temporary directory. Do not use a variable that is
 -- set, such as @HOME@: a wrongly quoted @chmod@ on this path once changed
 -- the mode of the home directory to 777.
+--
+-- Windows does not allow the double quote, the backslash and the glob in a
+-- file name.
 specialDirName :: String
-specialDirName = "dir with 'sq' \"dq\" $SIMPLE_RPC_UNSET `id` \\ * \233"
+specialDirName =
+    if isWindows
+    then "dir with 'sq' $SIMPLE_RPC_UNSET `id` \233"
+    else "dir with 'sq' \"dq\" $SIMPLE_RPC_UNSET `id` \\ * \233"
 
 quotingTests :: Env -> [Test]
 quotingTests env =
@@ -601,14 +611,15 @@ quotingTests env =
 
     cfgFor exe = serverConfig env & setImage (Executable exe testVersion)
 
-    -- A symbolic link to the test executable in specialDirName
+    -- A copy of the test executable in specialDirName. A symbolic link
+    -- needs extra privileges on Windows.
     specialExe = do
         let dir = envDir env </> specialDirName
-            exe = dir </> "server"
+            exe = dir </> "server" <.> exeExtension
         exists <- doesFileExist exe
         unless exists $ do
             createDirectory dir
-            createFileLink (envExe env) exe
+            copyFile (envExe env) exe
         pure exe
 
 -------------------------------------------------------------------------------
@@ -689,13 +700,20 @@ parseSeed args =
 
 main :: IO ()
 main = do
+    fake <- lookupFake
     mode <- lookupEnv (fst serverMode)
-    if mode == Just (snd serverMode)
-    then do
-        v <- lookupEnv "SIMPLE_RPC_TEST_VERSION"
-        let version = if v == Just "unicode" then "1.0-\233" else testVersion
-        mainWith version rpcMap
-    else do
+    case fake of
+        Just f -> runFake f
+        Nothing | mode == Just (snd serverMode) -> do
+            v <- lookupEnv "SIMPLE_RPC_TEST_VERSION"
+            let version =
+                    if v == Just "unicode" then "1.0-\233" else testVersion
+            mainWith version rpcMap
+        Nothing -> runAllTests
+
+    where
+
+    runAllTests = do
         seed <- parseSeed <$> getArgs
         env <- setupEnv
         let tests =
@@ -703,7 +721,11 @@ main = do
                     ++ serverTests env
                     ++ configTests
                     ++ clientTests env
-                    ++ installTests env
+                    ++ map
+                        (skipIf isWindows
+                            "the fake remote host is the local host, \
+                            \Windows is not a POSIX remote host")
+                        (installTests env)
                     ++ unicodeTests env
                     ++ quotingTests env
         runTests seed tests `finally` cleanupEnv env

@@ -70,7 +70,8 @@ test-suite simple-rpc-test
     import: lib-options
     type: exitcode-stdio-1.0
     main-is: Main.hs
-    other-modules: Harness
+    other-modules: Fake
+                 , Harness
                  , TestFunctions
                  , TestUtil
     hs-source-dirs: test
@@ -83,10 +84,9 @@ test-suite simple-rpc-test
                     , bytestring
                     , directory
                     , filepath
-                    , process
+                    , process >= 1.6.12
                     , streamly-core
                     , streamly-process
-                    , unix
                     , unordered-containers
 
 benchmark simple-rpc-bench
