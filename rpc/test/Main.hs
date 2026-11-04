@@ -6,7 +6,7 @@ module Main (main) where
 -- Imports
 -------------------------------------------------------------------------------
 
-import Control.Exception (SomeException, finally)
+import Control.Exception (displayException, finally)
 import Data.Function ((&))
 import Data.Functor.Identity (runIdentity)
 import Data.IORef (modifyIORef, newIORef, readIORef)
@@ -47,6 +47,12 @@ loggingConfig env = do
     ref <- newIORef []
     let cfg = serverConfig env & setLogger (\s -> modifyIORef ref (s:))
     pure (cfg, reverse <$> readIORef ref)
+
+-- | Check that the stderr of the server has the message of the exception.
+assertStderr :: BS.ByteString -> RpcException -> IO ()
+assertStderr err e =
+    assertBool ("stderr: " ++ show err)
+        (utf8 (displayException e) `BS.isInfixOf` err)
 
 -- | Print-able ASCII characters and the control characters.
 asciiString :: QC.Gen String
@@ -114,9 +120,10 @@ serverTests env =
         assertEqual ("exit code, stderr: " ++ show err) ExitSuccess code
         assertEqual "stdout" (utf8 "1.0-\233") out
 
-    , test "mainWith with two arguments fails" $ do
-        (code, _, _) <- runServerRaw env [] ["a", "b"] ""
+    , test "mainWith with two arguments raises InvalidUsage" $ do
+        (code, _, err) <- runServerRaw env [] ["a", "b"] ""
         assertEqual "exit code" (ExitFailure 1) code
+        assertStderr err (InvalidUsage ["a", "b"])
 
     , test "invokeFunction output protocol" $ do
         (code, out, _) <-
@@ -153,8 +160,14 @@ serverTests env =
     , test "invokeFunction with an unknown endpoint fails" $ do
         (code, _, err) <- runServerRaw env [] ["TestFunctions.nope"] "[]"
         assertEqual "exit code" (ExitFailure 1) code
-        assertBool "stderr names the endpoint"
-            (BSC.pack "TestFunctions.nope" `BS.isInfixOf` err)
+        assertStderr err (EndpointNotFound "TestFunctions.nope")
+
+    , test "invokeFunction with invalid JSON input raises InvalidInput" $ do
+        (code, _, err) <-
+            runServerRaw env [] ["TestFunctions.add"] "not json"
+        assertEqual "exit code" (ExitFailure 1) code
+        assertBool ("stderr: " ++ show err)
+            (utf8 "Invalid RPC input: " `BS.isInfixOf` err)
 
     , test "invokeFunction with an argument of a wrong type fails" $ do
         (code, _, _) <-
@@ -247,12 +260,30 @@ clientTests env =
         assertThrows "failing" (\(ProcessFailure n) -> n == 1)
             (runAt (serverConfig env) failing 1)
 
-    , test "runAt raises an exception on a version mismatch" $
-        assertThrows "version" (\(_ :: SomeException) -> True)
+    , test "runAt raises VersionMismatch on a version mismatch" $
+        assertThrows "version"
+            (== VersionMismatch (envExe env) "other" testVersion)
             (runAt
                 (defaultConfig (Executable (envExe env) "other")
                     & setLogger (const (pure ())))
                 add 1 2)
+
+    , test "runAt raises EmptyOutput when the server prints nothing" $ do
+        path <- fakeServer env "empty-server" "1" ""
+        assertThrows "empty" (== EmptyOutput)
+            (runAt
+                (serverConfig env & setImage (Executable path "1"))
+                echoInt 1)
+
+    , test "runAt raises InvalidOutput when the output is not JSON" $ do
+        path <- fakeServer env "garbage-server" "1" "garbage"
+        assertThrows "garbage"
+            (\e -> case e of
+                InvalidOutput _ -> True
+                _ -> False)
+            (runAt
+                (serverConfig env & setImage (Executable path "1"))
+                echoInt 1)
 
     , test "runAt with setUser runs the endpoint through sudo su" $ do
         clearFakeLog env

@@ -15,6 +15,9 @@ module Simple.RPC.Common
     , toIntermediateRep
     , toBinStream
 
+    -- * Exceptions
+    , RpcException(..)
+
     -- * Deprecated
     , rpcify
     ) where

@@ -55,12 +55,15 @@ module Simple.RPC.Internal.Types
     -- * RPC
     , Runner
 
+    -- * Exceptions
+    , RpcException(..)
     ) where
 
 --------------------------------------------------------------------------------
 -- Imports
 --------------------------------------------------------------------------------
 
+import Control.Exception (Exception(..))
 import Data.Aeson (ToJSON, FromJSON, toJSON, fromJSON)
 import Data.Function ((&))
 import Data.Functor.Identity (runIdentity)
@@ -85,6 +88,45 @@ import qualified Streamly.Data.Array as Array
 import qualified Streamly.Data.Stream as Stream
 import qualified Streamly.Internal.Data.Array as Array (unsafePinnedAsPtr)
 import qualified Streamly.Unicode.Stream as Unicode
+
+--------------------------------------------------------------------------------
+-- Exceptions
+--------------------------------------------------------------------------------
+
+-- | Exceptions raised by the RPC client and the RPC server.
+data RpcException
+    = EndpointNotFound String
+      -- ^ The server does not have an endpoint with this name.
+    | InvalidInput String
+      -- ^ The server could not decode the input of the endpoint, the
+      -- argument is the error message.
+    | InvalidOutput String
+      -- ^ The client could not decode the last output line of the server,
+      -- the argument is the error message.
+    | EmptyOutput
+      -- ^ The server did not print any output line.
+    | VersionMismatch String String String
+      -- ^ @VersionMismatch executable expected actual@: the server
+      -- executable printed the version @actual@ instead of @expected@.
+    | InvalidUsage [String]
+      -- ^ The server executable was called with these arguments, it accepts
+      -- at most one argument.
+    deriving (Eq, Show)
+
+instance Exception RpcException where
+    displayException e =
+        case e of
+            EndpointNotFound name -> "RPC endpoint not found: " ++ name
+            InvalidInput msg -> "Invalid RPC input: " ++ msg
+            InvalidOutput msg -> "Invalid RPC output: " ++ msg
+            EmptyOutput -> "The RPC server did not print an output line"
+            VersionMismatch exe expected actual ->
+                "Version mismatch for " ++ exe
+                    ++ ", expected: " ++ show expected
+                    ++ ", got: " ++ show actual
+            InvalidUsage args ->
+                "Usage: <executable> [<endpoint>], got the arguments: "
+                    ++ show args
 
 --------------------------------------------------------------------------------
 -- Running Config

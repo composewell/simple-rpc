@@ -29,7 +29,7 @@ module Simple.RPC.Client
 -- Imports
 --------------------------------------------------------------------------------
 
-import Control.Exception (SomeException, throwIO, try, Exception)
+import Control.Exception (SomeException, throwIO, try)
 import Control.Monad (when)
 import Data.Function ((&))
 import Data.Word (Word8)
@@ -83,7 +83,9 @@ versionGuard send mSshConf exe = do
         send $ showPair "ERR" [str|Version mismatch for #{prefix}#{exePath}|]
         send $ showPair "ERR" [str|Expected: #{exeVersionExpected}|]
         send $ showPair "ERR" [str|Got: #{exeVersion}|]
-        error "VersionMismatch"
+        throwIO
+            $ VersionMismatch
+                [str|#{prefix}#{exePath}|] exeVersionExpected exeVersion
 
 tracing :: (String -> IO ()) -> String -> String -> IO String
 tracing send tag val = send (showPair tag val) >> pure val
@@ -98,11 +100,6 @@ bufferLefts ref inp =
     where
     f (Left a) = IORef.modifyIORef ref (a:) >> pure Nothing
     f (Right b) = pure $ Just b
-
-data RpcException = EmptyOutput
-    deriving (Show)
-
-instance Exception RpcException
 
 -- XXX We should allow the input to be a stream instead of being finite.
 -- XXX We should not buffer the output, it should be returned as a stream.
@@ -147,7 +144,7 @@ pipe send using cmd input = do
         Right (Just val) -> do
             r <- irFromArray val
             case r of
-                Left err -> error $ "Unable to decode the output: " ++ err
+                Left err -> throwIO (InvalidOutput err)
                 Right x -> pure x
 
 -- XXX the remote call should be more seamless. We should be able to wrap any
@@ -194,6 +191,16 @@ with (RunningConfig{..}) actionName input = do
          in [str|#{ePath} #{actionName}|]
 
 -- | Make a RPC call at the remote host specified by the first argument.
+--
+-- The call raises:
+--
+-- * a 'VersionMismatch' exception if the server executable prints a version
+-- other than 'executableVersion',
+-- * a 'Streamly.Internal.System.Process.ProcessFailure' exception if the
+-- server process exits with a non-zero exit code,
+-- * an 'EmptyOutput' exception if the server does not print an output line,
+-- * an 'InvalidOutput' exception if the last output line of the server is not
+-- the JSON encoding of the result type.
 runAt :: RunningConfig -> RpcSymbol IntermediateRep typ -> typ
 runAt cfg sym = call sym (with cfg)
 

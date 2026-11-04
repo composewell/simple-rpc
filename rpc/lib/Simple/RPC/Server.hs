@@ -12,6 +12,7 @@ module Simple.RPC.Server
 -- Imports
 --------------------------------------------------------------------------------
 
+import Control.Exception (throwIO)
 import Data.Function ((&))
 import Streamly.Internal.Unicode.String (str)
 import System.Environment (getArgs)
@@ -37,10 +38,13 @@ import Simple.RPC.Internal.Types
 --
 -- The encoding of stdout is set to UTF-8, the client decodes the output as
 -- UTF-8 independent of the locale of the server.
+--
+-- Raise an 'EndpointNotFound' exception if the map does not have the
+-- function, and an 'InvalidInput' exception if the input is not valid JSON.
 invokeFunction :: RpcMap IntermediateRep -> String -> IO ()
 invokeFunction actions actionName =
     case lookupRpcSymbol actionName actions of
-        Nothing -> error [str|#{actionName} not found|]
+        Nothing -> throwIO (EndpointNotFound actionName)
         Just actFun -> do
             hSetEncoding stdout utf8
             -- XXX we should not buffer the input, it should be directly
@@ -54,7 +58,7 @@ invokeFunction actions actionName =
             r <- irFromArray inputBytes
             input <-
                 case r of
-                    Left err -> error $ "Unable to decode the input: " ++ err
+                    Left err -> throwIO (InvalidInput err)
                     Right x -> pure x
             output <- actFun input
             putStrLn ""
@@ -66,13 +70,14 @@ invokeFunction actions actionName =
 --
 -- * If no arguments are provided, it prints the version number in UTF-8
 -- encoding, without a newline.
--- * If more than one argument is provided, it is an error.
+-- * If more than one argument is provided, it raises an 'InvalidUsage'
+-- exception.
 -- * If exactly one argument is provided, the argument is treated as the name
 -- of the endpoint to be executed.
 --
 -- The RPC server executable implements several endpoints, it has a map of the
 -- endpoint name to the function that implements the endpoint. If the endpoint
--- is not found in the map then it is an error. If the endpoint is found then
+-- is not found in the map then it raises an 'EndpointNotFound' exception. If the endpoint is found then
 -- the stdin of the RPC executable is supplied as input to the corresponding
 -- function. The input is a serialized form (JSON) of the 'IntermediateRep'.
 -- The output of the endpoint is emitted on stdout as serialized form of
@@ -83,4 +88,4 @@ mainWith version actions = do
     case args of
         [] -> hSetEncoding stdout utf8 >> putStr version
         [actName] -> invokeFunction actions actName
-        _ -> error [str|Usage: <executable> [<action>]|]
+        _ -> throwIO (InvalidUsage args)
