@@ -218,9 +218,14 @@ setImageFlags x rc = rc { rcImageFlags = x }
 -- address is passed to ssh as it is, e.g. @user\@host@.
 --
 -- The remote command is run by the shell of the ssh user, the client quotes
--- it for a POSIX shell.
+-- it for a POSIX shell. The remote host must have a POSIX shell as the
+-- shell of the ssh user, a Windows host is not supported. The client can be
+-- on Windows, it runs @ssh.exe@.
 --
 -- Default is 'Nothing', the executable is run on the local host without ssh.
+--
+-- /Dependencies/: @ssh@ on the local host, a POSIX shell for the ssh user on
+-- the remote host.
 setRemote :: (String, String) -> RunningConfig -> RunningConfig
 setRemote x rc = rc { rcRemote = Just x }
 
@@ -230,7 +235,13 @@ setRemote x rc = rc { rcRemote = Just x }
 -- command with the shell of the user, the client quotes it for a POSIX
 -- shell. The version check is run as the current user.
 --
+-- Without 'setRemote', @sudo@ and @su@ are run on the local host, which is
+-- not supported on Windows.
+--
 -- Default is 'Nothing', the endpoint is run as the current user.
+--
+-- /Dependencies/: @sudo@ and @su@ on the host that runs the executable, a
+-- POSIX shell for the user.
 setUser :: String -> RunningConfig -> RunningConfig
 setUser x rc = rc { rcUser = Just x }
 
@@ -239,7 +250,12 @@ setUser x rc = rc { rcUser = Just x }
 -- executable ...@ is the command run by @su@, the user must be allowed to
 -- run @sudo@.
 --
+-- Without 'setRemote', @sudo@ is run on the local host, which is not
+-- supported on Windows.
+--
 -- Default is 'False'.
+--
+-- /Dependencies/: @sudo@ on the host that runs the executable.
 useSudo :: Bool -> RunningConfig -> RunningConfig
 useSudo x rc = rc { rcSudo = x }
 

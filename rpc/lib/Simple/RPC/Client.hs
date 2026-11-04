@@ -239,6 +239,12 @@ with (RunningConfig{..}) actionName input = do
 -- 'Streamly.Internal.System.Process.ProcessFailure' exception. The server
 -- reads the whole input before it raises an exception for an unknown
 -- endpoint.
+--
+-- /Dependencies/: none for a local call as the current user. 'setRemote'
+-- needs @ssh@ on the local host and a POSIX shell for the ssh user on the
+-- remote host. 'setUser' needs @sudo@, @su@ and a POSIX shell for the user.
+-- 'useSudo' needs @sudo@. With 'setRemote', @sudo@ and @su@ run on the
+-- remote host, otherwise on the local host.
 runAt :: RunningConfig -> RpcSymbol IntermediateRep typ -> typ
 runAt cfg sym = call sym (with cfg)
 
@@ -272,13 +278,26 @@ run = direct
 --
 -- The permissions of an existing directory are not changed. @install@
 -- creates a new file, therefore an instance of the executable that is
--- running is not affected. Requires @sudo@ access, @mktemp@ and @install@
--- on the remote machine.
+-- running is not affected.
+--
+-- The local executable is copied as it is, the remote host must be able to
+-- run the same file: the same OS and CPU architecture, and, unless the
+-- executable is statically linked, compatible versions of the shared
+-- libraries that it is linked with, e.g. glibc, libgmp and libffi. For
+-- example, an executable built on macOS does not run on Linux, and one
+-- built on a Linux distribution with a newer glibc may not run on another.
+-- The version check runs the local executable, therefore it also has to
+-- run on the local host. Not supported on a Windows client or a Windows
+-- remote host.
 --
 -- Raise a 'VersionMismatch' exception if the local executable prints a
 -- version other than 'executableVersion', and a
 -- 'Streamly.Internal.System.Process.ProcessFailure' exception if a command
 -- fails.
+--
+-- /Dependencies/: @ssh@ and @scp@ on the local host. A POSIX shell for the
+-- ssh user, @mktemp@, @rm@, @mkdir@, @install@ and @sudo@ access on the
+-- remote host.
 installOnRemote :: Executable -> (String, String) -> FilePath -> IO ()
 installOnRemote localExe sshConf@(addr, port) remoteExePath = do
     let exePath = executablePath localExe
