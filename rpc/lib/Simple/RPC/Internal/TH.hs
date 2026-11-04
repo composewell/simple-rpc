@@ -40,34 +40,41 @@ rpcExport oldFuncName newFuncName = do
 
     let endpoint = newFuncName
         endpointWithMod = modName ++ "." ++ endpoint
-        n_raw = mkName oldFuncName
         n_endpoint = mkName endpoint
-        n_runner = mkName "runner"
-        n_val = mkName "val"
         appEArgs = foldl appE
 
+    -- Resolve the name, a name made by mkName would be captured by a local
+    -- variable of the same name in the generated code.
+    mRaw <- lookupValueName oldFuncName
+    n_raw <-
+        case mRaw of
+            Just n -> pure n
+            Nothing -> fail $ "rpcExport: not in scope: " ++ oldFuncName
     typ <- getFunctionType n_raw
 
     let numArgs = getNumArgs typ
         enumArgs = [0..(numArgs - 1)]
-        strArgs = ('x':) . show <$> enumArgs
-        patArgs = varP . mkName <$> strArgs
-        varArgs = varE . mkName <$> strArgs
-        arrIndexTH i =
-            [|arrIndex $(varE n_val) $(litE (integerL (fromIntegral i)))|]
-        parsedArgs = map arrIndexTH enumArgs
+    n_runner <- newName "runner"
+    n_val <- newName "val"
+    n_args <- newName "args"
+    argNames <- mapM (\i -> newName ('x' : show i)) enumArgs
+    let patArgs = map varP argNames
+        varArgs = map varE argNames
 
-
-    let evalExp1 =
-            lamE
-                [(varP n_val)]
-                [|toIntermediateRep <$> $(appEArgs (varE n_raw) parsedArgs)|]
-        evalExp0 =
-            [|\x -> ensureNullArray x (toIntermediateRep <$> $(varE n_raw))|]
+    -- Decode all the arguments before calling the function, so that an
+    -- invalid input raises an exception before any effect of the function.
+    let intE i = litE (integerL (fromIntegral i))
+        bindArg i n = bindS (varP n) [|irArg $(varE n_args) $(intE i)|]
+        argsPat = if numArgs == 0 then wildP else varP n_args
         evalExp =
-            if numArgs == 0
-            then evalExp0
-            else evalExp1
+            lamE [varP n_val]
+                $ doE
+                $ bindS argsPat [|irArgs $(intE numArgs) $(varE n_val)|]
+                    : zipWith bindArg enumArgs argNames
+                    ++ [ noBindS
+                            [|toIntermediateRep
+                                <$> $(appEArgs (varE n_raw) varArgs)|]
+                       ]
 
     let toIntermediateRepTH k = [|toIntermediateRep $(k)|]
         encodedInput = [| createArr $(listE (map toIntermediateRepTH varArgs))|]

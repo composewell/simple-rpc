@@ -54,6 +54,12 @@ assertStderr err e =
     assertBool ("stderr: " ++ show err)
         (utf8 (displayException e) `BS.isInfixOf` err)
 
+-- | Check that the stderr of the server has an 'InvalidInput' message.
+assertInvalidInput :: BS.ByteString -> IO ()
+assertInvalidInput err =
+    assertBool ("stderr: " ++ show err)
+        (utf8 "Invalid RPC input: " `BS.isInfixOf` err)
+
 -- | Print-able ASCII characters and the control characters.
 asciiString :: QC.Gen String
 asciiString = QC.listOf (QC.choose ('\0', '\127'))
@@ -102,7 +108,7 @@ serverTests env =
                 , "TestFunctions.echoInt", "TestFunctions.echoString"
                 , "TestFunctions.failing", "TestFunctions.printPartial"
                 , "TestFunctions.replicateChar", "TestFunctions.three"
-                , "TestFunctions.writeMarker"
+                , "TestFunctions.valRpc", "TestFunctions.writeMarker"
                 ])
             (sort (HM.keys rpcMap))
 
@@ -153,9 +159,10 @@ serverTests env =
             runServerRaw env [] ["TestFunctions.constant"] "[]"
         assertEqual "exit code" ExitSuccess code
         assertEqual "last line" "42" (last (BSC.lines out))
-        (code1, _, _) <-
+        (code1, _, err1) <-
             runServerRaw env [] ["TestFunctions.constant"] "[1]"
         assertEqual "non-empty input" (ExitFailure 1) code1
+        assertInvalidInput err1
 
     , test "invokeFunction with an unknown endpoint fails" $ do
         (code, _, err) <- runServerRaw env [] ["TestFunctions.nope"] "[]"
@@ -166,13 +173,43 @@ serverTests env =
         (code, _, err) <-
             runServerRaw env [] ["TestFunctions.add"] "not json"
         assertEqual "exit code" (ExitFailure 1) code
-        assertBool ("stderr: " ++ show err)
-            (utf8 "Invalid RPC input: " `BS.isInfixOf` err)
+        assertInvalidInput err
 
     , test "invokeFunction with an argument of a wrong type fails" $ do
-        (code, _, _) <-
+        (code, _, err) <-
             runServerRaw env [] ["TestFunctions.add"] "[2,\"x\"]"
         assertEqual "exit code" (ExitFailure 1) code
+        assertInvalidInput err
+
+    , test "invokeFunction decodes all arguments before the call" $ do
+        let marker = envDir env </> "marker"
+            input = Json.encode (marker, "not an Int" :: String)
+        (code, _, err) <-
+            runServerRaw env [] ["TestFunctions.writeMarker"]
+                (BSL.toStrict input)
+        assertEqual "exit code" (ExitFailure 1) code
+        assertInvalidInput err
+        exists <- doesFileExist marker
+        assertBool "the endpoint was not called" (not exists)
+
+    , test "invokeFunction rejects a wrong number of arguments" $ do
+        let call input = do
+                (code, _, err) <-
+                    runServerRaw env [] ["TestFunctions.add"] input
+                assertEqual ("exit code " ++ show input) (ExitFailure 1) code
+                assertInvalidInput err
+        call "[1,2,3]"
+        call "[1]"
+        call "[]"
+        call "{}"
+        call "1"
+
+    , test "rpcExport of a function named val" $ do
+        r <- run valRpc 4
+        assertEqual "run" 8 r
+        (code, out, _) <- runServerRaw env [] ["TestFunctions.valRpc"] "[4]"
+        assertEqual "exit code" ExitSuccess code
+        assertEqual "last line" "8" (last (BSC.lines out))
     ]
 
 -------------------------------------------------------------------------------

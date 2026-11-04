@@ -13,8 +13,8 @@ module Simple.RPC.Internal.Types
 
     -- ** IR Arrays
     , createArr
-    , arrIndex
-    , ensureNullArray
+    , irArgs
+    , irArg
 
     -- ** IR Maps
     , createObj
@@ -63,7 +63,7 @@ module Simple.RPC.Internal.Types
 -- Imports
 --------------------------------------------------------------------------------
 
-import Control.Exception (Exception(..))
+import Control.Exception (Exception(..), throwIO)
 import Data.Aeson (ToJSON, FromJSON, toJSON, fromJSON)
 import Data.Function ((&))
 import Data.Functor.Identity (runIdentity)
@@ -332,22 +332,29 @@ fromIntermediateRep val =
 -- Arrays in IR
 --------------------------------------------------------------------------------
 
--- | Decode a null array in IR as the supplied value. If the array is
--- not null then it is an error.
-ensureNullArray :: IntermediateRep -> a -> a
-ensureNullArray (Json.Array vec) act =
-    if Vector.length vec == 0
-    then act
-    else error "Input is not an empty"
-ensureNullArray _ _ = error "Value is not an array type"
+-- | @irArgs n ir@ returns the elements of the IR array @ir@. Raise an
+-- 'InvalidInput' exception if @ir@ is not an array of @n@ elements.
+irArgs :: Int -> IntermediateRep -> IO (Vector.Vector IntermediateRep)
+irArgs n (Json.Array vec)
+    | Vector.length vec == n = pure vec
+irArgs n ir =
+    throwIO
+        $ InvalidInput
+        $ "expected an array of " ++ show n ++ " arguments, got: "
+            ++ irToString ir
 
--- | Retrieve the value at the given index in an IR array.
-arrIndex :: FromJSON a => IntermediateRep -> Int -> a
-arrIndex (Json.Array vec) i =
-    case vec !? i of
-        Nothing -> error $ "Could not find arg at position: " ++ show i
-        Just val -> fromIntermediateRep val
-arrIndex _ _ = error "Value is not an array type"
+-- | @irArg args i@ decodes the element at index @i@ of the arguments returned
+-- by 'irArgs'. Raise an 'InvalidInput' exception if the index is out of
+-- bounds or the element cannot be decoded to the required type.
+irArg :: FromJSON a => Vector.Vector IntermediateRep -> Int -> IO a
+irArg args i =
+    case args !? i of
+        Nothing -> throwIO $ InvalidInput $ "missing argument " ++ show i
+        Just v ->
+            case fromJSON v of
+                Json.Error err ->
+                    throwIO $ InvalidInput $ "argument " ++ show i ++ ": " ++ err
+                Json.Success a -> pure a
 
 -- | Create an array in IR from a list of IR Haskell values.
 createArr :: [IntermediateRep] -> IntermediateRep
