@@ -1,3 +1,7 @@
+-- | Make RPC calls to Haskell functions in an executable on a local or a
+-- remote host. This module re-exports "Simple.RPC.Client",
+-- "Simple.RPC.Server" and "Simple.RPC.Common".
+--
 module Simple.RPC
 (
     module  Simple.RPC.Client

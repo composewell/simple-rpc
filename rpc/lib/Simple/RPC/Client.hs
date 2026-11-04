@@ -1,6 +1,9 @@
 {-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 
+-- | Call the RPC endpoints of a server executable on the local host or, using
+-- ssh, on a remote host.
+--
 module Simple.RPC.Client
     (
     -- * RPC call
@@ -207,6 +210,16 @@ with (RunningConfig{..}) actionName input = do
     sudoWrapper True (cmd, args) = ("sudo", cmd : args)
 
 -- | Make a RPC call at the remote host specified by the first argument.
+--
+-- The call runs the executable twice, without arguments to check its version,
+-- and with the endpoint name to call the endpoint. The arguments are written
+-- to the stdin of the server as a JSON array, the last line of the stdout of
+-- the server is decoded as the result. The stderr of the server is buffered
+-- in memory and logged after the server exits. The result is decoded before
+-- the call returns.
+--
+-- On a remote host, the output of the shell startup files of the ssh user,
+-- if any, is part of the version check output and causes a version mismatch.
 --
 -- The call raises:
 --

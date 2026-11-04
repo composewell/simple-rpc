@@ -1,6 +1,9 @@
 {-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 
+-- | The main function of an RPC server executable, it calls the endpoint
+-- named by the command line argument.
+--
 module Simple.RPC.Server
     ( mainWith
     , RpcMap
@@ -36,11 +39,24 @@ import Simple.RPC.Internal.Types
 -- is supplied in serialized form on the stdin and the output is streamed in
 -- serialized form to stdout.
 --
+-- The input is the JSON array of the arguments, read from stdin up to the
+-- first newline or the end of the input. The function must not read stdin:
+-- the server reads stdin in blocks, and the bytes after the newline in the
+-- block that holds the newline are discarded. The output on stdout is:
+--
+-- * the line @[SERVER] endpoint input@,
+-- * the output of the function,
+-- * a newline,
+-- * the JSON encoding of the result, without a newline.
+--
+-- The client takes the last line of the output as the result.
+--
 -- The encoding of stdout is set to UTF-8, the client decodes the output as
 -- UTF-8 independent of the locale of the server.
 --
 -- Raise an 'EndpointNotFound' exception if the map does not have the
--- function, and an 'InvalidInput' exception if the input is not valid JSON.
+-- function, and an 'InvalidInput' exception if the input is not valid JSON or
+-- does not match the arguments of the function.
 invokeFunction :: RpcMap IntermediateRep -> String -> IO ()
 invokeFunction actions actionName = do
     -- XXX we should not buffer the input, it should be directly streamed to
@@ -49,6 +65,10 @@ invokeFunction actions actionName = do
     -- Read the input before raising an exception for an unknown endpoint. A
     -- client writing the input to a process that has exited gets a broken
     -- pipe error instead of the exit code of the process.
+    --
+    -- TODO takeEndBy_ discards the bytes after the newline in the block that
+    -- holds the newline. Pass them to the function when the input is
+    -- streamed to it.
     inputBytes <-
         FH.read stdin & Stream.fold (Fold.takeEndBy_ (== 10) Array.create)
     case lookupRpcSymbol actionName actions of

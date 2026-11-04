@@ -31,9 +31,27 @@ getNumArgs :: Type -> Int
 getNumArgs typ = length (breakTypeOnArrow typ) - 1
 
 -- | @rpcExport origName rpcName@, creates a toplevel value definition with
--- the name @rpcName@, of type 'RpcSymbol' representing an RPC endpoint.
+-- the name @rpcName@, of type t'RpcSymbol' representing an RPC endpoint.
+-- The endpoint name is @Module.rpcName@, where @Module@ is the current
+-- module.
 --
--- See the details under the docs of 'RpcSymbol'.
+-- For example:
+--
+-- > add :: Int -> Int -> IO Int
+-- > add x y = pure (x + y)
+-- > $(rpcExport "add" "addRpc")
+--
+-- @origName@ must be a function in scope with a monomorphic type of the form
+-- @a1 -> ... -> an -> IO r@, @n >= 0@, where every argument type and @r@
+-- have 'Data.Aeson.ToJSON' and 'Data.Aeson.FromJSON' instances. A type
+-- synonym for a function type, in the whole type or in the result type, is
+-- not expanded and does not compile.
+--
+-- The server side wrapper raises an 'InvalidInput' exception if the input is
+-- not an array of @n@ values that decode to the argument types, before it
+-- calls the function.
+--
+-- See the details under the docs of t'RpcSymbol'.
 rpcExport :: String -> String -> Q [Dec]
 rpcExport oldFuncName newFuncName = do
     modName <- loc_module <$> location

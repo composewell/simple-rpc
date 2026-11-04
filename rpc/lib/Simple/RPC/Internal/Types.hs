@@ -135,7 +135,12 @@ instance Exception RpcException where
 -- Running Config
 --------------------------------------------------------------------------------
 
--- | RPC server executable name and version.
+-- | RPC server executable path and version.
+--
+-- Before each call, the client runs the executable without arguments and
+-- compares its stdout with 'executableVersion'. The executable must print
+-- exactly this string, 'Simple.RPC.Server.mainWith' prints it without a
+-- trailing newline.
 data Executable =
     Executable
         { executablePath :: FilePath
@@ -147,7 +152,8 @@ data Executable =
 -- need to have a single mechanism.
 
 -- | RPC server specification: server, port, username, executable location,
--- privileges to use etc.
+-- privileges to use etc. See 'defaultConfig' and the setters for the meaning
+-- of the fields.
 data RunningConfig =
     RunningConfig
         { rcRemote :: Maybe (String, String)
@@ -164,8 +170,15 @@ data RunningConfig =
 -- match with the sha256 of local image. Image can be named with a platform
 -- suffix so that we can have cross platform access.
 
--- | Note we can use rpc to local host as well for executing a function as some
--- other user on the same host without using sudo.
+-- | A config that runs the executable on the local host as the current user,
+-- without flags, and logs with 'putStrLn':
+--
+-- * 'rcRemote' is 'Nothing', the executable is run without ssh,
+-- * 'rcUser' is 'Nothing',
+-- * 'rcSudo' is 'False',
+-- * 'rcImage' is the argument,
+-- * 'rcImageFlags' is @""@,
+-- * 'rcLogger' is 'putStrLn'.
 defaultConfig :: Executable -> RunningConfig
 defaultConfig exe =
     RunningConfig
@@ -199,25 +212,40 @@ setImage x rc = rc { rcImage = x }
 setImageFlags :: String -> RunningConfig -> RunningConfig
 setImageFlags x rc = rc { rcImageFlags = x }
 
--- | Modify the server name to use for ssh access.
+-- | @setRemote (address, port)@ sets the config to run the executable on a
+-- remote host. An endpoint call then runs
+-- @ssh -T -p port -o "StrictHostKeyChecking off" address command@. The
+-- address is passed to ssh as it is, e.g. @user\@host@.
 --
--- Default is local host IP address "127.0.0.1".
+-- The remote command is run by the shell of the ssh user, the client quotes
+-- it for a POSIX shell.
+--
+-- Default is 'Nothing', the executable is run on the local host without ssh.
 setRemote :: (String, String) -> RunningConfig -> RunningConfig
 setRemote x rc = rc { rcRemote = Just x }
 
--- | Modify the ssh username to use for running the endpoint.
+-- | Set the config to run the endpoint as this user. An endpoint call then
+-- runs @sudo su user -c command@. The current user, or the ssh user if
+-- 'setRemote' is used, must be allowed to run @sudo su@. @su@ runs the
+-- command with the shell of the user, the client quotes it for a POSIX
+-- shell. The version check is run as the current user.
 --
--- Default is the current user.
+-- Default is 'Nothing', the endpoint is run as the current user.
 setUser :: String -> RunningConfig -> RunningConfig
 setUser x rc = rc { rcUser = Just x }
 
--- | Use root privileges for running the endpoint.
+-- | Set the config to run the endpoint with @sudo@. An endpoint call then
+-- runs @sudo executable ...@. When 'setUser' is also used, @sudo
+-- executable ...@ is the command run by @su@, the user must be allowed to
+-- run @sudo@.
 --
 -- Default is 'False'.
 useSudo :: Bool -> RunningConfig -> RunningConfig
 useSudo x rc = rc { rcSudo = x }
 
--- | Use the supplied logger to for log and trace.
+-- | Use the supplied logger for log and trace. The client logs the commands,
+-- the input, each output line of the server and each stderr line of the
+-- server.
 --
 -- Default is 'putStrLn'.
 setLogger :: (String -> IO ()) -> RunningConfig -> RunningConfig
@@ -258,7 +286,7 @@ data RpcEval ir =
 
 -- | Represents an RPC endpoint consisting of:
 --
--- * @run@ is the same as the original function
+-- * @direct@ is the same as the original function
 -- * @call@ takes a 'Runner' and converts it into a local function call. The
 -- arguments from the local call are converted to IR and supplied to the
 -- Runner, similarly the result from the Runner is converted to Haskell type
@@ -275,7 +303,9 @@ data RpcSymbol ir typ =
         , evaluator :: RpcEval ir     -- server side generic (using IR) call
         }
 
--- | Get the name of the RPC endpoint.
+-- | Get the name of the RPC endpoint, @Module.name@, where @Module@ is the
+-- module that has the 'Simple.RPC.Common.rpcExport' splice and @name@ is the
+-- name given to 'Simple.RPC.Common.rpcExport'.
 rpcName :: RpcSymbol ir typ -> String
 rpcName = symbol . evaluator
 
@@ -295,12 +325,14 @@ rpcCallUsing = call
 -- XXX Map instead of HashMap?
 -- XXX rename to ServiceMap
 
--- | A map of symbol names and corresponding evals.
+-- | A map of endpoint names and the corresponding server side wrappers.
 type RpcMap ir = HM.HashMap String (ir -> IO ir)
 
 -- XXX serviceMapFromList
 
--- | Create a map from a list of symbol name, eval pairs.
+-- | Create a map from a list of server side wrappers, use 'evaluator' to get
+-- the wrapper of an t'RpcSymbol'. If two wrappers have the same endpoint name,
+-- the map has the one later in the list.
 createRpcMap :: [RpcEval ir] -> RpcMap ir
 createRpcMap = HM.fromList . map (\x -> (symbol x, eval x))
 
@@ -315,6 +347,9 @@ lookupRpcSymbol = HM.lookup
 --------------------------------------------------------------------------------
 
 -- | Format a tag and its value for pretty printing.
+--
+-- >>> showPair "CMD" "ls -l"
+-- "[CMD] ls -l"
 showPair :: String -> String -> String
 showPair tag val = "[" ++ tag ++ "] " ++ val
 
@@ -322,12 +357,18 @@ showPair tag val = "[" ++ tag ++ "] " ++ val
 -- Serialized values
 --------------------------------------------------------------------------------
 
+-- | The intermediate representation of the arguments and the results, a JSON
+-- value.
 type IntermediateRep = Json.Value
 
 --------------------------------------------------------------------------------
 -- Conerting Haskell values to/from IR
 --------------------------------------------------------------------------------
 
+-- | Convert a Haskell value to IR, the same as 'toJSON'.
+--
+-- >>> toIntermediateRep (1 :: Int, "a")
+-- Array [Number 1.0,String "a"]
 toIntermediateRep :: ToJSON a => a -> IntermediateRep
 toIntermediateRep = toJSON
 
