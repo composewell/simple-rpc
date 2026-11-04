@@ -31,6 +31,9 @@ common compile-options
         -Wno-redundant-bang-patterns
         -Wno-operator-whitespace
 
+    if impl(ghc >= 9.8)
+      ghc-options: -Wno-missing-role-annotations
+
     if flag(limit-build-mem)
       ghc-options: +RTS -M2G -RTS
 

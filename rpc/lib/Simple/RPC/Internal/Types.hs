@@ -59,9 +59,9 @@ module Simple.RPC.Internal.Types
     , RpcException(..)
     ) where
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Imports
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 import Control.Exception (Exception(..), throwIO)
 import Data.Aeson (ToJSON, FromJSON, toJSON, fromJSON)
@@ -92,9 +92,9 @@ import qualified Streamly.Internal.Data.Array as Array
     (fromPtrN, unsafePinnedAsPtr)
 import qualified Streamly.Unicode.Stream as Unicode
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Exceptions
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- | Exceptions raised by the RPC client and the RPC server.
 data RpcException
@@ -131,9 +131,9 @@ instance Exception RpcException where
                 "Usage: <executable> [<endpoint>], got the arguments: "
                     ++ show args
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Running Config
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- | RPC server executable path and version.
 --
@@ -251,9 +251,9 @@ useSudo x rc = rc { rcSudo = x }
 setLogger :: (String -> IO ()) -> RunningConfig -> RunningConfig
 setLogger x rc = rc { rcLogger = x }
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Symbols
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- XXX Call?
 
@@ -342,9 +342,9 @@ createRpcMap = HM.fromList . map (\x -> (symbol x, eval x))
 lookupRpcSymbol :: String -> RpcMap ir -> Maybe (ir -> IO ir)
 lookupRpcSymbol = HM.lookup
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Pretty printing
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- | Format a tag and its value for pretty printing.
 --
@@ -353,17 +353,17 @@ lookupRpcSymbol = HM.lookup
 showPair :: String -> String -> String
 showPair tag val = "[" ++ tag ++ "] " ++ val
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Serialized values
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- | The intermediate representation of the arguments and the results, a JSON
 -- value.
 type IntermediateRep = Json.Value
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Conerting Haskell values to/from IR
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- | Convert a Haskell value to IR, the same as 'toJSON'.
 --
@@ -380,9 +380,9 @@ resultFromIR val =
         Json.Error err -> throwIO $ InvalidOutput err
         Json.Success a -> pure a
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Arrays in IR
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- | @irArgs n ir@ returns the elements of the IR array @ir@. Raise an
 -- 'InvalidInput' exception if @ir@ is not an array of @n@ elements.
@@ -405,16 +405,18 @@ irArg args i =
         Just v ->
             case fromJSON v of
                 Json.Error err ->
-                    throwIO $ InvalidInput $ "argument " ++ show i ++ ": " ++ err
+                    throwIO
+                        $ InvalidInput
+                        $ "argument " ++ show i ++ ": " ++ err
                 Json.Success a -> pure a
 
 -- | Create an array in IR from a list of IR Haskell values.
 createArr :: [IntermediateRep] -> IntermediateRep
 createArr = Json.Array . Vector.fromList
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Key-value maps in IR
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- XXX swap the arguments?
 
@@ -434,9 +436,9 @@ objLookup _ _ = error "Value is not an object type"
 createObj :: [(String, IntermediateRep)] -> IntermediateRep
 createObj kv = Json.object $ map (Data.Bifunctor.first Key.fromString) kv
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Conversions of IR
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- | Convert the Haskell representation of IR (i.e. Json) to a byte stream of
 -- its JSON encoding.

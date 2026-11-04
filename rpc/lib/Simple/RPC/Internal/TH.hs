@@ -5,16 +5,16 @@ module Simple.RPC.Internal.TH
     , rpcify
     ) where
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Imports
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 import Language.Haskell.TH
 import Simple.RPC.Internal.Types
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Functions
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 getFunctionType :: Name -> Q Type
 getFunctionType _func = do
@@ -95,7 +95,8 @@ rpcExport oldFuncName newFuncName = do
                        ]
 
     let toIntermediateRepTH k = [|toIntermediateRep $(k)|]
-        encodedInput = [| createArr $(listE (map toIntermediateRepTH varArgs))|]
+        encodedInput =
+            [|createArr $(listE (map toIntermediateRepTH varArgs))|]
 
         runningExp =
             lamE

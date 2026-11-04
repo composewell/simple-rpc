@@ -11,9 +11,9 @@ module Simple.RPC.Server
     , invokeFunction
     ) where
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Imports
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 import Control.Exception (throwIO)
 import Data.Function ((&))
@@ -28,9 +28,9 @@ import qualified Streamly.FileSystem.Handle as FH
 
 import Simple.RPC.Internal.Types
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Utils
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- XXX To reduce execution delays we should have this running as a server. Or
 -- at least make sure the executable is not swapped out.
@@ -99,11 +99,11 @@ invokeFunction actions actionName = do
 --
 -- The RPC server executable implements several endpoints, it has a map of the
 -- endpoint name to the function that implements the endpoint. If the endpoint
--- is not found in the map then it raises an 'EndpointNotFound' exception. If the endpoint is found then
--- the stdin of the RPC executable is supplied as input to the corresponding
--- function. The input is a serialized form (JSON) of the 'IntermediateRep'.
--- The output of the endpoint is emitted on stdout as serialized form of
--- 'IntermediateRep'.
+-- is not found in the map then it raises an 'EndpointNotFound' exception. If
+-- the endpoint is found then the stdin of the RPC executable is supplied as
+-- input to the corresponding function. The input is a serialized form (JSON)
+-- of the 'IntermediateRep'. The output of the endpoint is emitted on stdout as
+-- serialized form of 'IntermediateRep', see 'invokeFunction'.
 mainWith :: String -> RpcMap IntermediateRep -> IO ()
 mainWith version actions = do
     args <- getArgs

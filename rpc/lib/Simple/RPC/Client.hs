@@ -28,9 +28,9 @@ module Simple.RPC.Client
     , installOnRemote
     ) where
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Imports
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 import Control.Exception (SomeException, onException, throwIO, try)
 import Control.Monad (when)
@@ -50,9 +50,9 @@ import qualified Streamly.Internal.Unicode.Stream as Unicode
 
 import Simple.RPC.Internal.Types
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Utils
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- streamly-coreutils (Streamly.Coreutils.Sh) has the maintained definitions
 -- of shellQuote and shellCommand; these are copies. Make changes there and
@@ -120,7 +120,9 @@ bufferLefts
     :: IORef.IORef [a] -> Stream.Stream IO (Either a b) -> Stream.Stream IO b
 bufferLefts ref inp =
     Stream.mapM f inp & Stream.catMaybes
+
     where
+
     f (Left a) = IORef.modifyIORef ref (a:) >> pure Nothing
     f (Right b) = pure $ Just b
 
@@ -234,8 +236,9 @@ with (RunningConfig{..}) actionName input = do
 -- With streamly-process 0.4.1, if the server process exits before it reads
 -- all of the input and the input is larger than the pipe buffer, the call
 -- raises an 'IOError' for the broken pipe instead of the
--- 'Streamly.Internal.System.Process.ProcessFailure' exception. The server reads the whole input before it raises an exception
--- for an unknown endpoint.
+-- 'Streamly.Internal.System.Process.ProcessFailure' exception. The server
+-- reads the whole input before it raises an exception for an unknown
+-- endpoint.
 runAt :: RunningConfig -> RpcSymbol IntermediateRep typ -> typ
 runAt cfg sym = call sym (with cfg)
 
@@ -245,9 +248,9 @@ runAt cfg sym = call sym (with cfg)
 run :: RpcSymbol IntermediateRep typ -> typ
 run = direct
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Backward compatibility
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- NOTE: This should be removed from here. Leave the installation to the user.
 -- XXX We can avoid sudo access or have a separate API which does not require
