@@ -1,0 +1,383 @@
+# packcheck-0.7.1
+# You can use any of the options supported by packcheck as environment
+# variables here.  See https://github.com/composewell/packcheck for all
+# options and their explanation.
+
+name: TEST
+
+#-----------------------------------------------------------------------------
+# Events on which the build should be triggered
+#-----------------------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - master
+
+#-----------------------------------------------------------------------------
+# Build matrix
+#-----------------------------------------------------------------------------
+
+jobs:
+  build:
+    name: >-
+      ${{ matrix.runner }}
+      ${{ matrix.command }}
+      ${{ matrix.ghc_version }}
+      ${{ matrix.name }}
+    env:
+      # ------------------------------------------------------------------------
+      # Common options
+      # ------------------------------------------------------------------------
+
+      # Subdir
+      SUBDIR: ${{ matrix.subdir }}
+
+      # If this option is enabled packcheck clears out the environment
+      # and only uses the options explicitly set on the command line,
+      # implicit environment won't affect the build.
+      CHECK_ENV: "y"
+
+      # NOTE: by capturing the options in env variables here quotes
+      # are preserved, if we expand them directly into the script
+      # quotes are lost.
+      #
+      # WARNING! you cannot use comments in this
+      COMMON_OPTIONS: >-
+        LC_ALL=C.UTF-8
+        BUILD_PREFETCH=y
+        GHCUP_VERSION=latest
+        GHCVER=${{ matrix.ghc_version }}
+        DISABLE_SDIST_BUILD="y"
+        DISABLE_BENCH="y"
+        DISABLE_DOCS="y"
+
+      # WARNING! you cannot use comments in this
+      CABAL_OPTIONS: >-
+        CABAL_REINIT_CONFIG=y
+        CABAL_CHECK_RELAX=y
+
+      MATRIX_OPTIONS: ${{ matrix.pack_options }}
+
+      # ------------------------------------------------------------------------
+      # Location of packcheck.sh (the shell script invoked to perform CI tests ).
+      # ------------------------------------------------------------------------
+      PACKCHECK_GITHUB_URL: "https://raw.githubusercontent.com/composewell/packcheck"
+      PACKCHECK_GITHUB_COMMIT: "20514de6ae27035b0406b4ed46d628c806e40b49"
+
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.ignore_error }}
+    strategy:
+      fail-fast: false
+      matrix:
+
+        # IMPORTANT NOTE:
+        # If runner, command, ghc version are identical then the name of
+        # CI is used to distinguish the cache key.
+
+        include:
+
+          # Builds all packages, tests, benchmarks and docs.
+          - name: werror
+            runner: ubuntu-latest
+            command: cabal
+            ghc_version: 9.10.3
+            # WARNING! cannot use # comments inside pack_options.
+            pack_options: >-
+              CABAL_PROJECT=cabal.project.Werror
+              DISABLE_DOCS="n"
+              DISABLE_BENCH="n"
+            ignore_error: false
+
+          # Builds simple-rpc from its source distribution, without a
+          # project file, the same way hackage builds it.
+          - name: simple-rpc-sdist
+            runner: ubuntu-latest
+            command: cabal
+            ghc_version: 9.10.3
+            subdir: rpc
+            # WARNING! cannot use # comments inside pack_options.
+            pack_options: >-
+              DISABLE_SDIST_BUILD="n"
+            ignore_error: false
+
+          - name: ci
+            runner: ubuntu-latest
+            command: cabal
+            ghc_version: 9.14.1
+            # WARNING! cannot use # comments inside pack_options.
+            pack_options: >-
+              CABAL_PROJECT=cabal.project.ci
+            ignore_error: false
+
+          - name: ci
+            runner: ubuntu-latest
+            command: cabal
+            ghc_version: 9.12.4
+            # WARNING! cannot use # comments inside pack_options.
+            pack_options: >-
+              CABAL_PROJECT=cabal.project.ci
+            ignore_error: false
+
+          - name: ci
+            runner: ubuntu-latest
+            command: cabal
+            ghc_version: 9.8.4
+            # WARNING! cannot use # comments inside pack_options.
+            pack_options: >-
+              CABAL_PROJECT=cabal.project.ci
+            ignore_error: false
+
+          - name: ci
+            runner: macos-latest
+            command: cabal
+            ghc_version: 9.12.4
+            # WARNING! cannot use # comments inside pack_options.
+            pack_options: >-
+              CABAL_PROJECT=cabal.project.ci
+            ignore_error: false
+
+          # The fake ssh of the test suite runs the remote commands with
+          # the sh of Git for Windows, /usr/bin in the PATH that packcheck
+          # sets.
+          - name: ci
+            runner: windows-latest
+            command: cabal
+            ghc_version: 9.12.4
+            # WARNING! cannot use # comments inside pack_options.
+            pack_options: >-
+              CABAL_PROJECT=cabal.project.ci
+            ignore_error: false
+
+          # The "Expose hidden modules" step below changes other-modules to
+          # exposed-modules in the simple-rpc library, because cabal-docspec
+          # checks the exposed modules only.
+          - name: docspec
+            runner: ubuntu-latest
+            command: cabal
+            ghc_version: 9.10.3
+            # WARNING! cannot use # comments inside pack_options.
+            pack_options: >-
+              CABAL_PROJECT=cabal.project.doctest
+              DISABLE_TEST="y"
+              DISABLE_DIST_CHECKS="y"
+              ENABLE_DOCSPEC="y"
+              DOCSPEC_URL=https://github.com/phadej/cabal-extras/releases/download/cabal-docspec-0.0.0.20250606/cabal-docspec-0.0.0.20250606-x86_64-linux.xz
+              DOCSPEC_OPTIONS="--timeout 60"
+            ignore_error: false
+
+#-----------------------------------------------------------------------------
+# Usually you do not need to change anything below, this is generic code for
+# caching and running packcheck on Linux/Mac/Windows.
+#-----------------------------------------------------------------------------
+
+    steps:
+
+    - name: Enable long paths on Windows
+      if: runner.os == 'Windows'
+      shell: powershell
+      continue-on-error: true
+      run: |
+        # Enable long paths.  Sometimes failures occur due to path
+        # length limitation.
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\FileSystem' -Name 'LongPathsEnabled' -value 1
+
+    - uses: actions/checkout@v4
+
+    - name: Expose hidden modules (docspec)
+      if: matrix.name == 'docspec'
+      run: |
+        sed -i '/^library/,/^[a-z]/ s/other-modules:/exposed-modules:/' \
+          rpc/simple-rpc.cabal
+        grep -n 'modules:' rpc/simple-rpc.cabal
+
+    # The macOS image may ship Command Line Tools newer than the default
+    # Xcode. Linking against the CLT SDK then fails with "tapi error:
+    # malformed file ... unknown architecture arm64e.x1-macos". Select the
+    # default Xcode so that the compiler, linker and SDK come from the same
+    # toolchain, and point the CLT MacOSX.sdk symlink at the Xcode SDK
+    # because the GHC bindists hardcode the CLT SDK path. packcheck clears
+    # the environment, so SDKROOT or DEVELOPER_DIR cannot be used instead.
+    #
+    # The GHC and dependency cache keys include the Xcode version and build,
+    # so a runner image with a different Xcode installs GHC afresh.
+    - name: Select default Xcode (macOS)
+      id: xcode
+      if: runner.os == 'macOS'
+      run: |
+        sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+        xcode-select -p
+        sdk=$(xcrun --show-sdk-path)
+        echo "$sdk"
+        clt=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+        if test -L "$clt"; then
+          ls -ld "$clt"
+          sudo ln -sfn "$sdk" "$clt"
+          ls -ld "$clt"
+        fi
+        ver=$(xcodebuild -version | awk 'NR==1{v=$2} /Build version/{b=$3} END{print v "-" b}')
+        echo "toolchain=-xcode-$ver" >> "$GITHUB_OUTPUT"
+
+    # This should happen before cache restore.
+    - name: Remove ~/.ghcup symlink (non-Windows)
+      if: runner.os != 'Windows'
+      run: |
+        rm -f ~/.ghcup
+
+    # On Windows the hackage index is part of C:/cabal, see below.
+    - name: Restore hackage package index (non-Windows)
+      id: restore-hackage
+      uses: actions/cache/restore@v4
+      if: runner.os != 'Windows'
+      with:
+        path: |
+            ~/.cache/cabal/packages
+        key: cabal-hackage-index
+
+    # GHC is not test/options specific. On Windows restoring GHC from the
+    # cache takes longer than installing it, so it is not cached.
+    - name: Restore ghcup and ghc (non-Windows)
+      id: restore-ghcup
+      uses: actions/cache/restore@v4
+      if: runner.os != 'Windows'
+      with:
+        path: |
+          ~/.ghcup
+        key: ghc-${{ matrix.ghc_version }}-${{ matrix.runner }}${{ steps.xcode.outputs.toolchain }}
+
+    # Deps are test/options specific
+    - name: Restore build dependencies (non-Windows)
+      id: restore-deps-nonwin
+      uses: actions/cache/restore@v4
+      if: runner.os != 'Windows'
+      with:
+        path: |
+          ~/.local/bin
+          ~/.local/state/cabal
+        key: ${{ matrix.command }}-deps-ghc-${{ matrix.ghc_version }}-${{ matrix.runner }}-${{ matrix.name }}${{ steps.xcode.outputs.toolchain }}-${{ hashFiles('cabal.project*') }}
+
+    # Deps are test/options specific
+    - name: Restore build dependencies, hackage index (Windows)
+      id: restore-deps-win
+      uses: actions/cache/restore@v4
+      if: runner.os == 'Windows'
+      with:
+        path: |
+          C:/cabal
+        key: ${{ matrix.command }}-deps-ghc-${{ matrix.ghc_version }}-${{ matrix.runner }}-${{ matrix.name }}-${{ hashFiles('cabal.project*') }}
+
+    - name: Download packcheck
+      # on windows-latest GitHub Actions defaults to PowerShell
+      shell: bash
+      run: |
+        if test -n "$SUBDIR"; then
+          cd "$SUBDIR"
+        fi
+        if test -z "$PACKCHECK_GITHUB_COMMIT"; then
+          echo "PACKCHECK_GITHUB_COMMIT env var is not specified." >&2
+          exit 1
+        fi
+        curl --fail -sLO \
+          "${PACKCHECK_GITHUB_URL}/${PACKCHECK_GITHUB_COMMIT}/packcheck.sh"
+        chmod +x packcheck.sh
+
+    # Store the function in a file so that it can be reused across multiple
+    # steps.
+    - name: Setup packcheck
+      shell: bash
+      run: |
+        if test -n "$SUBDIR"; then
+          rm -f cabal.project
+          cd "$SUBDIR"
+        fi
+        cat << 'EOF' > packcheck-setup.sh
+        setup_packcheck_args() {
+          ARGS="${{ matrix.command }} $COMMON_OPTIONS"
+          if test "${{ matrix.command }}" = "cabal"; then
+            ARGS="$ARGS $CABAL_OPTIONS"
+          fi
+
+          # Caution: do not use matrix.pack_options directly here
+          # quotes will get stripped.
+          ARGS="$ARGS $MATRIX_OPTIONS"
+          PATH_VAR=/bin:/usr/bin:/sbin:/usr/sbin
+
+          case "$(uname)" in
+            Linux)
+              export GHCUP_INSTALL_BASE_PREFIX=$HOME
+              ;;
+            CYGWIN*|MINGW*|MSYS*)
+              for var in APPDATA CABAL_DIR; do
+                val="${!var}"
+                [ -n "$val" ] && ARGS="$ARGS $var=\"$(cygpath -u "$val")\""
+              done
+              ARGS="$ARGS CABAL_BUILDDIR=\"/c/b\" WINVER=$WINVER"
+              ARGS="$ARGS NUMBER_OF_PROCESSORS=$NUMBER_OF_PROCESSORS"
+              ARGS="$ARGS PROCESSOR_IDENTIFIER=\"$PROCESSOR_IDENTIFIER\""
+              # Git for Windows 2.56 moved /mingw64 to /ucrt64
+              PATH_VAR="$PATH_VAR:/c/ghcup:/c/Program Files/7-Zip:/ucrt64/bin:/mingw64/bin"
+              ;;
+          esac
+          ARGS="$ARGS PATH=\"$PATH_VAR\""
+          export ARGS
+        }
+        EOF
+
+    - name: Run packcheck (dependencies only)
+      id: deps-only
+      if: |
+        (runner.os != 'Windows' && steps.restore-deps-nonwin.outputs.cache-hit != 'true') ||
+        (runner.os == 'Windows' && steps.restore-deps-win.outputs.cache-hit != 'true')
+      shell: bash
+      run: |
+        if test -n "$SUBDIR"; then
+          cd "$SUBDIR"
+        fi
+        source packcheck-setup.sh
+        setup_packcheck_args
+        eval "./packcheck.sh $ARGS BUILD_DEPS_ONLY=y"
+
+    - name: Save hackage package index (non-Windows)
+      uses: actions/cache/save@v4
+      if: always() && steps.deps-only.outcome == 'success' && runner.os != 'Windows' && steps.restore-hackage.outputs.cache-hit != 'true'
+      with:
+        path: ~/.cache/cabal/packages
+        key: cabal-hackage-index
+
+    - name: Save ghcup and ghc (non-Windows)
+      uses: actions/cache/save@v4
+      if: always() && steps.deps-only.outcome == 'success' && runner.os != 'Windows' && steps.restore-ghcup.outputs.cache-hit != 'true'
+      with:
+        path: ~/.ghcup
+        key: ghc-${{ matrix.ghc_version }}-${{ matrix.runner }}${{ steps.xcode.outputs.toolchain }}
+
+    # Deps are test/options specific, hence, matrix.name in the key
+    - name: Save build dependencies (non-Windows)
+      uses: actions/cache/save@v4
+      if: always() && steps.deps-only.outcome == 'success' && runner.os != 'Windows' && steps.restore-deps-nonwin.outputs.cache-hit != 'true'
+      with:
+        path: |
+          ~/.local/bin
+          ~/.local/state/cabal
+        key: ${{ matrix.command }}-deps-ghc-${{ matrix.ghc_version }}-${{ matrix.runner }}-${{ matrix.name }}${{ steps.xcode.outputs.toolchain }}-${{ hashFiles('cabal.project*') }}
+
+    # The hackage package index is part of C:/cabal
+    - name: Save build dependencies (Windows)
+      uses: actions/cache/save@v4
+      if: always() && steps.deps-only.outcome == 'success' && runner.os == 'Windows' && steps.restore-deps-win.outputs.cache-hit != 'true'
+      with:
+        path: |
+          C:/cabal
+        key: ${{ matrix.command }}-deps-ghc-${{ matrix.ghc_version }}-${{ matrix.runner }}-${{ matrix.name }}-${{ hashFiles('cabal.project*') }}
+
+    - name: Run packcheck (final build)
+      shell: bash
+      run: |
+        if test -n "$SUBDIR"; then
+          cd "$SUBDIR"
+        fi
+        source packcheck-setup.sh
+        setup_packcheck_args
+        eval "./packcheck.sh $ARGS BUILD_PACKAGE_ONLY=y"

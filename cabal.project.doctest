@@ -1,0 +1,8 @@
+-- Project file for cabal-docspec. The docspec CI changes other-modules to
+-- exposed-modules in rpc/simple-rpc.cabal before the build, because
+-- cabal-docspec checks the exposed modules only.
+
+packages: rpc
+
+-- Cap GHC heap usage so that builds do not exhaust the machine memory
+flags: +limit-build-mem
