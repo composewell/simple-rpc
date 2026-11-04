@@ -61,3 +61,26 @@ library
                     , filepath
                     , unordered-containers
     hs-source-dirs:   lib
+
+test-suite simple-rpc-test
+    import: lib-options
+    type: exitcode-stdio-1.0
+    main-is: Main.hs
+    other-modules: Harness
+                 , TestFunctions
+                 , TestUtil
+    hs-source-dirs: test
+    -- The test executable also runs as the RPC server for the tests.
+    ghc-options: -threaded -rtsopts -with-rtsopts=-M1G
+    build-depends:    base
+                    , simple-rpc
+                    , QuickCheck
+                    , aeson
+                    , bytestring
+                    , directory
+                    , filepath
+                    , process
+                    , streamly-core
+                    , streamly-process
+                    , unix
+                    , unordered-containers
