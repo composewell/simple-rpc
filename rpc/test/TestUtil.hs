@@ -16,9 +16,9 @@ module TestUtil
     , genUnicodeString
     ) where
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Imports
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
@@ -46,9 +46,9 @@ import qualified Data.ByteString.Lazy as BSL
 import qualified System.Process as Process
 import qualified Test.QuickCheck as QC
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Environment
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- | The name and value of the environment variable that runs the test
 -- executable as the RPC server.
@@ -187,9 +187,9 @@ readFakeLog env = do
 clearFakeLog :: Env -> IO ()
 clearFakeLog env = writeFile (envFakeLog env) ""
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Server process
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- | @runServerRaw env extraEnv args input@ runs the test executable as the
 -- RPC server with @args@, the environment variables @extraEnv@ added, and
@@ -227,9 +227,9 @@ runServerRaw env extraEnv args input = do
             pure (code, out, err)
         _ -> error "runServerRaw: createProcess did not create pipes"
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Generators
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- | Generate a JSON value with integral numbers, so that a value survives
 -- an encode and decode round trip.

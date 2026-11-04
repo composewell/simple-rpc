@@ -2,9 +2,9 @@
 
 module Main (main) where
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Imports
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 import Control.Exception (SomeException, finally)
 import Data.Function ((&))
@@ -31,9 +31,9 @@ import Simple.RPC
 import TestFunctions
 import TestUtil
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Helpers
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- | A config for the test server that does not log.
 serverConfig :: Env -> RunningConfig
@@ -52,9 +52,9 @@ loggingConfig env = do
 asciiString :: QC.Gen String
 asciiString = QC.listOf (QC.choose ('\0', '\127'))
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Simple.RPC.Common
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 commonTests :: [Test]
 commonTests =
@@ -83,9 +83,9 @@ commonTests =
         assertEqual "three" (1, "x", True) r3
     ]
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Simple.RPC.Server
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 serverTests :: Env -> [Test]
 serverTests env =
@@ -104,6 +104,15 @@ serverTests env =
         (code, out, _) <- runServerRaw env [] [] ""
         assertEqual "exit code" ExitSuccess code
         assertEqual "stdout" (BSC.pack testVersion) out
+
+    , test "mainWith prints a non-ASCII version in the C locale" $ do
+        let vars =
+                [ ("LC_ALL", "C"), ("LANG", "C")
+                , ("SIMPLE_RPC_TEST_VERSION", "unicode")
+                ]
+        (code, out, err) <- runServerRaw env vars [] ""
+        assertEqual ("exit code, stderr: " ++ show err) ExitSuccess code
+        assertEqual "stdout" (utf8 "1.0-\233") out
 
     , test "mainWith with two arguments fails" $ do
         (code, _, _) <- runServerRaw env [] ["a", "b"] ""
@@ -153,9 +162,9 @@ serverTests env =
         assertEqual "exit code" (ExitFailure 1) code
     ]
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Simple.RPC.Client
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 configTests :: [Test]
 configTests =
@@ -303,9 +312,9 @@ installTests env =
             (any ("scp [-P] [22] " `isPrefixOf`) logged)
     ]
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Unicode
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 unicodeTests :: Env -> [Test]
 unicodeTests env =
@@ -316,6 +325,27 @@ unicodeTests env =
         assertEqual ("exit code, stderr: " ++ show err) ExitSuccess code
         assertEqual "last line"
             (utf8 "\"T\233st\8594\"") (last (BSC.lines out))
+
+    , test "invokeFunction writes UTF-8 output in the C locale" $ do
+        let cLocale = [("LC_ALL", "C"), ("LANG", "C")]
+        (code, out, err) <-
+            runServerRaw env cLocale ["TestFunctions.echoString"]
+                (utf8 "[\"\233\"]")
+        assertEqual ("echoString, stderr: " ++ show err) ExitSuccess code
+        assertEqual "echoString stdout"
+            (utf8
+                $ "[SERVER] TestFunctions.echoString [\"\233\"]\n"
+                    ++ "\n\"\233\"")
+            out
+        (code1, out1, err1) <-
+            runServerRaw env cLocale ["TestFunctions.printPartial"]
+                (utf8 "[\"\8594\"]")
+        assertEqual ("printPartial, stderr: " ++ show err1) ExitSuccess code1
+        assertEqual "printPartial stdout"
+            (utf8
+                $ "[SERVER] TestFunctions.printPartial [\"\8594\"]\n"
+                    ++ "\8594\n\"\8594\"")
+            out1
 
     , test "runAt decodes a UTF-8 result" $ do
         path <- fakeServer env "utf8-server" "1" (utf8 "\"T\233st\8594\"")
@@ -337,9 +367,9 @@ unicodeTests env =
         assertBool ("input: " ++ show logged) ("[\"\233\"]" `elem` logged)
     ]
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Main
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- | Parse @--seed N@ from the arguments, default 0.
 parseSeed :: [String] -> Int
@@ -353,7 +383,10 @@ main :: IO ()
 main = do
     mode <- lookupEnv (fst serverMode)
     if mode == Just (snd serverMode)
-    then mainWith testVersion rpcMap
+    then do
+        v <- lookupEnv "SIMPLE_RPC_TEST_VERSION"
+        let version = if v == Just "unicode" then "1.0-\233" else testVersion
+        mainWith version rpcMap
     else do
         seed <- parseSeed <$> getArgs
         env <- setupEnv

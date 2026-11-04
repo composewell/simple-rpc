@@ -15,7 +15,7 @@ module Simple.RPC.Server
 import Data.Function ((&))
 import Streamly.Internal.Unicode.String (str)
 import System.Environment (getArgs)
-import System.IO (stdout, stdin)
+import System.IO (hSetEncoding, stdin, stdout, utf8)
 
 import qualified Streamly.Data.Array as Array
 import qualified Streamly.Data.Fold as Fold
@@ -34,11 +34,15 @@ import Simple.RPC.Internal.Types
 -- | Given a RpcMap and a function name invoke the function. The function input
 -- is supplied in serialized form on the stdin and the output is streamed in
 -- serialized form to stdout.
+--
+-- The encoding of stdout is set to UTF-8, the client decodes the output as
+-- UTF-8 independent of the locale of the server.
 invokeFunction :: RpcMap IntermediateRep -> String -> IO ()
 invokeFunction actions actionName =
     case lookupRpcSymbol actionName actions of
         Nothing -> error [str|#{actionName} not found|]
         Just actFun -> do
+            hSetEncoding stdout utf8
             -- XXX we should not buffer the input, it should be directly
             -- streamed to the function, otherwise we cannot support
             -- infinite or large input.
@@ -60,7 +64,8 @@ invokeFunction actions actionName =
 -- the version number. The behavior of the main function in the executable is
 -- as follows:
 --
--- * If no arguments are provided, it prints the version number.
+-- * If no arguments are provided, it prints the version number in UTF-8
+-- encoding, without a newline.
 -- * If more than one argument is provided, it is an error.
 -- * If exactly one argument is provided, the argument is treated as the name
 -- of the endpoint to be executed.
@@ -76,6 +81,6 @@ mainWith :: String -> RpcMap IntermediateRep -> IO ()
 mainWith version actions = do
     args <- getArgs
     case args of
-        [] -> putStr version
+        [] -> hSetEncoding stdout utf8 >> putStr version
         [actName] -> invokeFunction actions actName
         _ -> error [str|Usage: <executable> [<action>]|]
