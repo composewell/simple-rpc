@@ -8,10 +8,12 @@ module Main (main) where
 
 import Control.Exception (displayException, finally, try)
 import Control.Monad (unless)
+import Data.Bits ((.&.))
 import Data.Function ((&))
 import Data.Functor.Identity (runIdentity)
 import Data.IORef (modifyIORef, newIORef, readIORef)
 import Data.List (isPrefixOf, sort)
+import Numeric (showOct)
 import Streamly.Internal.System.Process (ProcessFailure(..))
 import System.Directory
     ( createDirectory, createFileLink, doesFileExist, executable
@@ -19,6 +21,11 @@ import System.Directory
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
+import System.IO (hClose, hPutStr)
+import System.Posix.Files (fileMode, getFileStatus, setFileMode)
+import System.Process
+    ( CreateProcess(std_in, std_out), StdStream(..), createProcess, proc
+    , waitForProcess )
 import Test.QuickCheck (forAll, ioProperty, withMaxSuccess)
 
 import qualified Data.Aeson as Json
@@ -417,6 +424,51 @@ installTests env =
         logged <- readFakeLog env
         assertBool ("scp: " ++ show logged)
             (any ("scp [-P] [22] " `isPrefixOf`) logged)
+
+    , test "installOnRemote keeps the permissions of the directory" $ do
+        let destDir = envDir env </> "install2"
+            dest = destDir </> "server"
+        createDirectory destDir
+        setFileMode destDir 0o755
+        clearFakeLog env
+        installOnRemote
+            (Executable (envExe env) testVersion) ("u@h", "22") dest
+        -- The last scp argument is "u@h:<temporary file>"
+        logged <- readFakeLog env
+        case filter ("scp " `isPrefixOf`) logged of
+            [line] -> do
+                let tmp = drop (length ("[u@h:" :: String))
+                            $ init $ last $ words line
+                tmpExists <- doesFileExist tmp
+                assertBool ("temporary file removed: " ++ tmp) (not tmpExists)
+            other -> assertBool ("one scp call: " ++ show other) False
+        dirMode <- fileMode <$> getFileStatus destDir
+        assertEqual "directory mode" "755" (showOct (dirMode .&. 0o777) "")
+        exeMode <- fileMode <$> getFileStatus dest
+        assertEqual "executable mode" "755" (showOct (exeMode .&. 0o777) "")
+
+    , test "installOnRemote with special characters in the path" $ do
+        let dest = envDir env </> "install3" </> specialDirName </> "srv"
+        installOnRemote
+            (Executable (envExe env) testVersion) ("u@h", "22") dest
+        r <- runAt (serverConfig env & setImage (Executable dest testVersion))
+                add 2 3
+        assertEqual "installed server" 5 r
+
+    , test "installOnRemote replaces a running executable" $ do
+        let dest = envDir env </> "install4" </> "server"
+            exe = Executable (envExe env) testVersion
+        installOnRemote exe ("u@h", "22") dest
+        -- The server waits for its input on stdin
+        (Just hin, _, _, ph) <-
+            createProcess
+                (proc dest ["TestFunctions.add"])
+                    { std_in = CreatePipe, std_out = CreatePipe }
+        installOnRemote exe ("u@h", "22") dest
+            `finally` do
+                hPutStr hin "[1,2]"
+                hClose hin
+                waitForProcess ph
     ]
 
 -------------------------------------------------------------------------------

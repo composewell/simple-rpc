@@ -29,7 +29,7 @@ module Simple.RPC.Client
 -- Imports
 --------------------------------------------------------------------------------
 
-import Control.Exception (SomeException, throwIO, try)
+import Control.Exception (SomeException, onException, throwIO, try)
 import Control.Monad (when)
 import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
 import Data.Function ((&))
@@ -42,7 +42,6 @@ import qualified Data.IORef as IORef
 import qualified Streamly.Internal.Data.Array as Array (compactEndByLn_)
 import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Data.Stream as Stream
-import qualified Streamly.Internal.System.Command as Cmd
 import qualified Streamly.Internal.System.Process as Proc
 import qualified Streamly.Internal.Unicode.Stream as Unicode
 
@@ -76,17 +75,20 @@ shellQuote x
 shellCommand :: FilePath -> [String] -> String
 shellCommand exe args = unwords (map shellQuote (exe : args))
 
--- | @sshCommand remote (exe, args)@ runs @exe args@ on the @remote@ (address,
--- port) using ssh. ssh passes the command to the shell of the remote user.
-sshCommand :: (String, String) -> (FilePath, [String]) -> (FilePath, [String])
-sshCommand (addr, port) (exe, args) =
-    ( "ssh"
-    , [ "-T", "-p", port, "-o", "StrictHostKeyChecking off", addr
-      , shellCommand exe args
-      ]
-    )
+-- | @sshShell remote cmd@ runs the shell command line @cmd@ on the @remote@
+-- (address, port) using ssh. ssh passes the command to the shell of the
+-- remote user.
+sshShell :: (String, String) -> String -> (FilePath, [String])
+sshShell (addr, port) cmd =
+    ("ssh", ["-T", "-p", port, "-o", "StrictHostKeyChecking off", addr, cmd])
 
-versionGuard :: (String -> IO ()) -> Maybe (String, String) -> Executable -> IO ()
+-- | @sshCommand remote (exe, args)@ runs @exe args@ on the @remote@ (address,
+-- port) using ssh.
+sshCommand :: (String, String) -> (FilePath, [String]) -> (FilePath, [String])
+sshCommand remote (exe, args) = sshShell remote (shellCommand exe args)
+
+versionGuard
+    :: (String -> IO ()) -> Maybe (String, String) -> Executable -> IO ()
 versionGuard send mSshConf exe = do
     let exePath = executablePath exe
         exeVersionExpected = executableVersion exe
@@ -234,26 +236,54 @@ run = direct
 
 -- XXX scpRpcImage
 
--- | @installOnRemote localPath sshEndpoint remotePath@. Install the RPC
--- endpoint server executable on a remote machine using @scp@. Requires @sudo@
--- access to create the directory if it does not exist.
+-- | @installOnRemote localExe sshEndpoint remotePath@. Install the RPC
+-- endpoint server executable on a remote machine:
+--
+-- * check the version of the local executable,
+-- * copy it with @scp@ to a temporary file created by @mktemp@ on the remote
+--   machine,
+-- * create the directory of @remotePath@ with @sudo mkdir -p@, if it does not
+--   exist, and copy the temporary file to @remotePath@ with
+--   @sudo install -m 755@, the file is owned by root and is readable and
+--   executable by all users,
+-- * remove the temporary file.
+--
+-- The permissions of an existing directory are not changed. @install@
+-- creates a new file, therefore an instance of the executable that is
+-- running is not affected. Requires @sudo@ access, @mktemp@ and @install@
+-- on the remote machine.
+--
+-- Raise a 'VersionMismatch' exception if the local executable prints a
+-- version other than 'executableVersion', and a
+-- 'Streamly.Internal.System.Process.ProcessFailure' exception if a command
+-- fails.
 installOnRemote :: Executable -> (String, String) -> FilePath -> IO ()
 installOnRemote localExe sshConf@(addr, port) remoteExePath = do
     let exePath = executablePath localExe
         remoteExeDir = takeDirectory remoteExePath
     versionGuard putStrLn Nothing localExe
-    Cmd.toStdout $ mkSSHCmd sshConf [str|sudo mkdir -p #{remoteExeDir}|]
-
-    -- XXX this is unsafe, gives write access to anyone.
-    Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+rw #{remoteExeDir}|]
-    Cmd.toStdout [str|scp -P #{port} #{exePath} #{addr}:#{remoteExePath}|]
-    -- XXX nned chmod o-w
-    Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+r #{remoteExeDir}|]
-    -- XXX we do not need sudo for this.
-    Cmd.toStdout $ mkSSHCmd sshConf [str|sudo chmod a+x #{remoteExePath}|]
+    tmpOut <- uncurry Proc.toString $ sshCommand sshConf ("mktemp", [])
+    let tmp = takeWhile (/= '\n') tmpOut
+        removeTmp =
+            uncurry Proc.toStdout $ sshCommand sshConf ("rm", ["-f", tmp])
+    flip onException removeTmp
+        $ Proc.toStdout "scp"
+            ["-P", port, scpLocalPath exePath, addr ++ ":" ++ tmp]
+    let qTmp = shellQuote tmp
+        install =
+            shellCommand "sudo" ["mkdir", "-p", remoteExeDir]
+                ++ " && "
+                ++ shellCommand "sudo"
+                    ["install", "-m", "755", tmp, remoteExePath]
+                ++ "; r=$?; rm -f " ++ qTmp ++ "; exit $r"
+    uncurry Proc.toStdout $ sshShell sshConf install
 
     where
 
-    mkSSHCmd (a, p) cmd =
-        let qCmd = show cmd
-         in [str|ssh -T -p #{p} -o "StrictHostKeyChecking off" #{a} #{qCmd}|]
+    -- scp takes a path with a colon before any slash as a remote path, and a
+    -- path that starts with a dash as an option.
+    scpLocalPath p =
+        case break (\c -> c == ':' || c == '/') p of
+            (_, ':' : _) -> "./" ++ p
+            ('-' : _, _) -> "./" ++ p
+            _ -> p
