@@ -140,6 +140,24 @@ serverTests env =
                 ])
             (sort (HM.keys rpcMap))
 
+    , test "evaluator in createRpcMap calls the function with IR" $ do
+        let m = createRpcMap [evaluator add, evaluator constant]
+        case HM.lookup "TestFunctions.add" m of
+            Nothing -> assertBool "add not found" False
+            Just f -> do
+                r <- f (toIntermediateRep [2, 3 :: Int])
+                assertEqual "add" (toIntermediateRep (5 :: Int)) r
+                assertThrows "add [1]"
+                    (\e -> case e of
+                        InvalidInput _ -> True
+                        _ -> False)
+                    (f (toIntermediateRep [1 :: Int]))
+        case HM.lookup "TestFunctions.constant" m of
+            Nothing -> assertBool "constant not found" False
+            Just f -> do
+                r <- f (toIntermediateRep ([] :: [Int]))
+                assertEqual "constant" (toIntermediateRep (42 :: Int)) r
+
     , test "mainWith without arguments prints the version" $ do
         (code, out, _) <- runServerRaw env [] [] ""
         assertEqual "exit code" ExitSuccess code
@@ -635,6 +653,15 @@ unicodeTests env =
                 (serverConfig env & setImage (Executable path "1"))
                 echoString "x"
         assertEqual "result" "T\233st\8594" r
+
+    , test "runAt logs invalid UTF-8 output with replacement characters" $ do
+        path <- fakeServer env "invalid-utf8-server" "1" "\xff\xfe\n7"
+        (cfg, getLog) <- loggingConfig env
+        r <- runAt (cfg & setImage (Executable path "1")) echoInt 1
+        assertEqual "result" 7 r
+        logged <- getLog
+        assertBool ("log: " ++ show logged)
+            ("[STDOUT] \65533\65533" `elem` logged)
 
     , test "runAt round trips Unicode String arguments" $ do
         let cfg = serverConfig env
