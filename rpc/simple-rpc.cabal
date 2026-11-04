@@ -85,3 +85,15 @@ test-suite simple-rpc-test
                     , streamly-process
                     , unix
                     , unordered-containers
+
+benchmark simple-rpc-bench
+    import: lib-options
+    type: exitcode-stdio-1.0
+    main-is: Main.hs
+    hs-source-dirs: benchmark
+    -- The benchmark executable also runs as the RPC server.
+    ghc-options: -threaded -rtsopts -with-rtsopts=-M1G
+    build-depends:    base
+                    , simple-rpc
+                    , aeson
+                    , streamly-core
