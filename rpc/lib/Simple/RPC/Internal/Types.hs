@@ -362,6 +362,63 @@ showPair tag val = "[" ++ tag ++ "] " ++ val
 type IntermediateRep = Json.Value
 
 -------------------------------------------------------------------------------
+-- Conversions of IR
+-------------------------------------------------------------------------------
+
+-- | Convert the Haskell representation of IR (i.e. Json) to a byte stream of
+-- its JSON encoding.
+--
+-- The stream is generated from the chunks of the lazy encoding, the time is
+-- linear in the size of the encoding.
+{-# INLINE toBinStream #-}
+toBinStream :: Monad m => IntermediateRep -> Stream m Word8
+toBinStream input =
+    Stream.fromList (BSL.toChunks (Json.encode input))
+        & Stream.unfoldEach (Unfold.lmap BS.unpack Unfold.fromList)
+
+-- | Copy a ByteString to an array.
+byteStringToArray :: BS.ByteString -> IO (Array Word8)
+byteStringToArray c =
+    BS.Unsafe.unsafeUseAsCStringLen c
+        $ \(p, n) -> Array.fromPtrN n (castPtr p)
+
+-- | Convert the Haskell representation of IR (i.e. Json) to a stream of
+-- arrays of its JSON encoding, one array for each chunk of the lazy encoding.
+toChunkStream :: IntermediateRep -> Stream IO (Array Word8)
+toChunkStream input =
+    Stream.fromList (BSL.toChunks (Json.encode input))
+        & Stream.mapM byteStringToArray
+
+-- | Convert a byte stream of IR (i.e. Json) to its Haskell representation.
+fromBinStream :: Stream IO Word8 -> IO IntermediateRep
+fromBinStream input = do
+    res <- Stream.toList input
+    case Json.decode $ BSL.pack res of
+        Nothing -> error "Unable to decode"
+        Just x -> pure x
+
+-- | Decode a UTF-8 encoded byte array to a String, replacing invalid bytes
+-- with the Unicode replacement character. Used for logging.
+decodeUtf8Array :: Array Word8 -> String
+decodeUtf8Array arr =
+    runIdentity $ Stream.toList $ Unicode.decodeUtf8 $ Array.read arr
+
+-- | Decode the UTF-8 encoded JSON representation of IR in a byte array.
+-- Returns the decoding error message on failure.
+irFromArray :: Array Word8 -> IO (Either String IntermediateRep)
+irFromArray arr = do
+    bs <-
+        Array.unsafePinnedAsPtr arr
+            $ \p n -> BS.packCStringLen (castPtr p, n)
+    pure $ Json.eitherDecodeStrict' bs
+
+-- | Convert the Haskell representation of IR (i.e. Json) to String. Used for
+-- logging.
+irToString :: IntermediateRep -> String
+irToString input =
+    TextL.unpack $ TextL.decodeUtf8With Text.lenientDecode $ Json.encode input
+
+-------------------------------------------------------------------------------
 -- Conerting Haskell values to/from IR
 -------------------------------------------------------------------------------
 
@@ -435,60 +492,3 @@ objLookup _ _ = error "Value is not an object type"
 -- | Convert (String, IR) key-value pairs to a map in IR.
 createObj :: [(String, IntermediateRep)] -> IntermediateRep
 createObj kv = Json.object $ map (Data.Bifunctor.first Key.fromString) kv
-
--------------------------------------------------------------------------------
--- Conversions of IR
--------------------------------------------------------------------------------
-
--- | Convert the Haskell representation of IR (i.e. Json) to a byte stream of
--- its JSON encoding.
---
--- The stream is generated from the chunks of the lazy encoding, the time is
--- linear in the size of the encoding.
-{-# INLINE toBinStream #-}
-toBinStream :: Monad m => IntermediateRep -> Stream m Word8
-toBinStream input =
-    Stream.fromList (BSL.toChunks (Json.encode input))
-        & Stream.unfoldEach (Unfold.lmap BS.unpack Unfold.fromList)
-
--- | Copy a ByteString to an array.
-byteStringToArray :: BS.ByteString -> IO (Array Word8)
-byteStringToArray c =
-    BS.Unsafe.unsafeUseAsCStringLen c
-        $ \(p, n) -> Array.fromPtrN n (castPtr p)
-
--- | Convert the Haskell representation of IR (i.e. Json) to a stream of
--- arrays of its JSON encoding, one array for each chunk of the lazy encoding.
-toChunkStream :: IntermediateRep -> Stream IO (Array Word8)
-toChunkStream input =
-    Stream.fromList (BSL.toChunks (Json.encode input))
-        & Stream.mapM byteStringToArray
-
--- | Convert a byte stream of IR (i.e. Json) to its Haskell representation.
-fromBinStream :: Stream IO Word8 -> IO IntermediateRep
-fromBinStream input = do
-    res <- Stream.toList input
-    case Json.decode $ BSL.pack res of
-        Nothing -> error "Unable to decode"
-        Just x -> pure x
-
--- | Decode a UTF-8 encoded byte array to a String, replacing invalid bytes
--- with the Unicode replacement character. Used for logging.
-decodeUtf8Array :: Array Word8 -> String
-decodeUtf8Array arr =
-    runIdentity $ Stream.toList $ Unicode.decodeUtf8 $ Array.read arr
-
--- | Decode the UTF-8 encoded JSON representation of IR in a byte array.
--- Returns the decoding error message on failure.
-irFromArray :: Array Word8 -> IO (Either String IntermediateRep)
-irFromArray arr = do
-    bs <-
-        Array.unsafePinnedAsPtr arr
-            $ \p n -> BS.packCStringLen (castPtr p, n)
-    pure $ Json.eitherDecodeStrict' bs
-
--- | Convert the Haskell representation of IR (i.e. Json) to String. Used for
--- logging.
-irToString :: IntermediateRep -> String
-irToString input =
-    TextL.unpack $ TextL.decodeUtf8With Text.lenientDecode $ Json.encode input
