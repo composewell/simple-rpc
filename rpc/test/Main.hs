@@ -7,12 +7,15 @@ module Main (main) where
 -------------------------------------------------------------------------------
 
 import Control.Exception (displayException, finally, try)
+import Control.Monad (unless)
 import Data.Function ((&))
 import Data.Functor.Identity (runIdentity)
 import Data.IORef (modifyIORef, newIORef, readIORef)
 import Data.List (isPrefixOf, sort)
 import Streamly.Internal.System.Process (ProcessFailure(..))
-import System.Directory (doesFileExist, executable, getPermissions)
+import System.Directory
+    ( createDirectory, createFileLink, doesFileExist, executable
+    , getPermissions )
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
@@ -394,6 +397,75 @@ installTests env =
     ]
 
 -------------------------------------------------------------------------------
+-- Command quoting
+-------------------------------------------------------------------------------
+
+-- | A directory name with characters that a shell interprets.
+--
+-- If a command is not quoted correctly, the shell expands the variable to
+-- an empty string and the glob to the files of the working directory, which
+-- 'setupEnv' sets to the temporary directory. Do not use a variable that is
+-- set, such as @HOME@: a wrongly quoted @chmod@ on this path once changed
+-- the mode of the home directory to 777.
+specialDirName :: String
+specialDirName = "dir with 'sq' \"dq\" $SIMPLE_RPC_UNSET `id` \\ * \233"
+
+quotingTests :: Env -> [Test]
+quotingTests env =
+    [ test "runAt with special characters in the executable path" $ do
+        exe <- specialExe
+        r <- runAt (cfgFor exe) add 2 3
+        assertEqual "add" 5 r
+
+    , test "runAt with useSudo and special characters in the path" $ do
+        exe <- specialExe
+        r <- runAt (cfgFor exe & useSudo True) add 2 3
+        assertEqual "add" 5 r
+
+    , test "runAt with setUser and special characters in the path" $ do
+        exe <- specialExe
+        clearFakeLog env
+        r <- runAt (cfgFor exe & setUser "rpc 'user'") add 2 3
+        assertEqual "add" 5 r
+        logged <- readFakeLog env
+        assertBool ("su: " ++ show logged)
+            (any ("su [rpc 'user'] [-c] " `isPrefixOf`) logged)
+
+    , test "runAt with setRemote and special characters in the path" $ do
+        exe <- specialExe
+        r <- runAt (cfgFor exe & setRemote ("u@h", "22")) add 2 3
+        assertEqual "add" 5 r
+
+    , test "runAt with setRemote, setUser, useSudo and a special path" $ do
+        exe <- specialExe
+        clearFakeLog env
+        let cfg =
+                cfgFor exe
+                    & setRemote ("u@h", "22")
+                    & setUser "rpc 'user'"
+                    & useSudo True
+        r <- runAt cfg three 1 "a 'b' $c" True
+        assertEqual "three" (1, "a 'b' $c", True) r
+        logged <- readFakeLog env
+        assertBool ("su: " ++ show logged)
+            (any ("su [rpc 'user'] [-c] " `isPrefixOf`) logged)
+    ]
+
+    where
+
+    cfgFor exe = serverConfig env & setImage (Executable exe testVersion)
+
+    -- A symbolic link to the test executable in specialDirName
+    specialExe = do
+        let dir = envDir env </> specialDirName
+            exe = dir </> "server"
+        exists <- doesFileExist exe
+        unless exists $ do
+            createDirectory dir
+            createFileLink (envExe env) exe
+        pure exe
+
+-------------------------------------------------------------------------------
 -- Unicode
 -------------------------------------------------------------------------------
 
@@ -478,4 +550,5 @@ main = do
                     ++ clientTests env
                     ++ installTests env
                     ++ unicodeTests env
+                    ++ quotingTests env
         runTests seed tests `finally` cleanupEnv env

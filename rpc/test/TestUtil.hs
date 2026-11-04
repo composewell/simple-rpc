@@ -23,12 +23,14 @@ module TestUtil
 import Control.Concurrent (forkIO)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import Control.Exception (IOException, catch, evaluate)
+import Control.Monad (forM_, when)
 import Data.Aeson (Value, toJSON)
 import System.Directory
-    ( Permissions, createDirectory, getPermissions, getTemporaryDirectory
-    , removeDirectoryRecursive, setOwnerExecutable, setPermissions )
+    ( Permissions, createDirectory, findExecutable, getCurrentDirectory
+    , getPermissions, getTemporaryDirectory, removeDirectoryRecursive
+    , setCurrentDirectory, setOwnerExecutable, setPermissions )
 import System.Environment
-    (getEnvironment, getExecutablePath, lookupEnv, setEnv)
+    (getEnvironment, getExecutablePath, lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode)
 import System.FilePath ((</>))
 import System.IO (hClose, hSetBinaryMode)
@@ -58,6 +60,7 @@ serverMode = ("SIMPLE_RPC_TEST_MODE", "server")
 data Env =
     Env
         { envDir :: FilePath     -- ^ temporary directory for the tests
+        , envOrigDir :: FilePath -- ^ working directory before 'setupEnv'
         , envExe :: FilePath     -- ^ path of the test executable
         , envFakeLog :: FilePath -- ^ invocations of the fake commands
         }
@@ -148,10 +151,20 @@ fakeServer env name version output = do
     pure path
 
 -- | Create the temporary directory and the fake commands, put the fake
--- commands first in @PATH@ and make the child processes of the test
--- executable run as the RPC server.
+-- commands first in @PATH@, make the temporary directory the working
+-- directory and make the child processes of the test executable run as the
+-- RPC server.
+--
+-- The tests run @sudo@, @su@, @ssh@ and @scp@ commands. Raise an exception
+-- if @PATH@ does not find the fake command for any of them, so that a test
+-- never runs the real one.
+--
+-- With the temporary directory as the working directory, a relative path or
+-- a glob in a wrongly quoted command refers to the files of the temporary
+-- directory only.
 setupEnv :: IO Env
 setupEnv = do
+    origDir <- getCurrentDirectory
     tmp <- getTemporaryDirectory
     pid <- getProcessID
     exe <- getExecutablePath
@@ -172,10 +185,21 @@ setupEnv = do
     setEnv "SIMPLE_RPC_FAKE_HOME" home
     setEnv "SIMPLE_RPC_FAKE_LOG" logFile
     uncurry setEnv serverMode
-    pure $ Env dir exe logFile
+    -- Used in a test path, must expand to an empty string
+    unsetEnv "SIMPLE_RPC_UNSET"
+    forM_ ["ssh", "scp", "sudo", "su"] $ \cmd -> do
+        found <- findExecutable cmd
+        when (found /= Just (bin </> cmd))
+            $ ioError $ userError
+            $ "setupEnv: PATH finds " ++ show found ++ " for " ++ cmd
+                ++ ", not the fake " ++ show (bin </> cmd)
+    setCurrentDirectory dir
+    pure $ Env dir origDir exe logFile
 
 cleanupEnv :: Env -> IO ()
-cleanupEnv env = removeDirectoryRecursive (envDir env)
+cleanupEnv env = do
+    setCurrentDirectory (envOrigDir env)
+    removeDirectoryRecursive (envDir env)
 
 -- | The lines of the fake command log.
 readFakeLog :: Env -> IO [String]

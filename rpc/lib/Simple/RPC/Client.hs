@@ -31,15 +31,14 @@ module Simple.RPC.Client
 
 import Control.Exception (SomeException, throwIO, try)
 import Control.Monad (when)
+import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
 import Data.Function ((&))
 import Data.Word (Word8)
 import Streamly.Data.Array (Array)
-import Streamly.Data.Stream (Stream)
 import Streamly.Internal.Unicode.String (str)
 import System.FilePath (takeDirectory)
 
 import qualified Data.IORef as IORef
-import qualified Streamly.Data.Array as Array
 import qualified Streamly.Internal.Data.Array as Array (compactEndByLn_)
 import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Data.Stream as Stream
@@ -53,28 +52,47 @@ import Simple.RPC.Internal.Types
 -- Utils
 --------------------------------------------------------------------------------
 
-type Pipe =
-    String ->
-    Stream IO (Array.Array Word8) ->
-    Stream IO (Either (Array.Array Word8) (Array.Array Word8))
+-- streamly-coreutils (Streamly.Coreutils.Sh) has the maintained definitions
+-- of shellQuote and shellCommand; these are copies. Make changes there and
+-- copy them here.
 
-pipeChunksEither
-    :: String
-    -> Stream.Stream IO (Array Word8)
-    -> Stream.Stream IO (Either (Array Word8) (Array Word8))
-pipeChunksEither = Cmd.pipeWith Proc.pipeChunksEither
+-- | Quote a string for a POSIX shell. A non-empty string of characters that
+-- the shell does not interpret is returned unchanged.
+shellQuote :: String -> String
+shellQuote x
+    | not (null x) && all safe x = x
+    | otherwise = '\'' : concatMap escape x ++ "'"
+
+    where
+
+    escape '\'' = "'\\''"
+    escape c = [c]
+
+    safe c =
+        isAsciiUpper c || isAsciiLower c || isDigit c || c `elem` "-_./=:,+@%"
+
+-- | A command line for a POSIX shell, running the executable with the
+-- arguments.
+shellCommand :: FilePath -> [String] -> String
+shellCommand exe args = unwords (map shellQuote (exe : args))
+
+-- | @sshCommand remote (exe, args)@ runs @exe args@ on the @remote@ (address,
+-- port) using ssh. ssh passes the command to the shell of the remote user.
+sshCommand :: (String, String) -> (FilePath, [String]) -> (FilePath, [String])
+sshCommand (addr, port) (exe, args) =
+    ( "ssh"
+    , [ "-T", "-p", port, "-o", "StrictHostKeyChecking off", addr
+      , shellCommand exe args
+      ]
+    )
 
 versionGuard :: (String -> IO ()) -> Maybe (String, String) -> Executable -> IO ()
 versionGuard send mSshConf exe = do
     let exePath = executablePath exe
         exeVersionExpected = executableVersion exe
-    let cmdVersionCheck =
-            case mSshConf of
-                Nothing -> [str|#{exePath}|]
-                Just (addr, port) ->
-                    [str|ssh -T -p #{port} -o "StrictHostKeyChecking off" #{addr} #{exePath}|]
-    send $ showPair "CMD" cmdVersionCheck
-    exeVersion <- Cmd.toString cmdVersionCheck
+    let (cmd, args) = maybe id sshCommand mSshConf (exePath, [])
+    send $ showPair "CMD" (shellCommand cmd args)
+    exeVersion <- Proc.toString cmd args
     let prefix =
             case mSshConf of
                 Nothing -> ""
@@ -105,19 +123,24 @@ bufferLefts ref inp =
 -- XXX We should not buffer the output, it should be returned as a stream.
 -- XXX We should be able to use websockets instead of ssh.
 
--- | @pipe send using cmd input@ - execute @cmd@ (the @ssh@ command) as a
--- process providing @input@ on its stdin and returning the last line of its
--- output as result. i.e. it takes input from stdin and provides output on
--- stdout.
+-- | @pipe send exe args input@ - run the executable @exe@ with arguments
+-- @args@ as a process providing @input@ on its stdin and returning the last
+-- line of its output as result. i.e. it takes input from stdin and provides
+-- output on stdout.
 --
 -- BUGs: the output JSON from the remote call must not have a newline '\n'
 -- character. It will cause unexpected behavior. Also, the output must be
 -- finite as it is collected in a buffer.
 --
 -- @send@ is a function for logging a String for debug and tracing.
-pipe :: (String -> IO ()) -> Pipe -> Runner IntermediateRep
-pipe send using cmd input = do
-    send $ showPair "CMD" cmd
+pipe
+    :: (String -> IO ())
+    -> FilePath
+    -> [String]
+    -> IntermediateRep
+    -> IO IntermediateRep
+pipe send exe args input = do
+    send $ showPair "CMD" (shellCommand exe args)
     send $ showPair "INP" ""
     send $ irToString input
     send ""
@@ -126,7 +149,7 @@ pipe send using cmd input = do
 
     actionRes <- try $
         toChunkStream input
-            & using cmd
+            & Proc.pipeChunksEither exe args
             & bufferLefts errRef
             & Array.compactEndByLn_
             & Stream.fold (Fold.lmapM (traceLine send "STDOUT") Fold.latest)
@@ -158,37 +181,28 @@ with :: RunningConfig -> Runner IntermediateRep
 with (RunningConfig{..}) actionName input = do
     let send = rcLogger
     versionGuard send rcRemote rcImage
-    let cmd =
-              sshWrapper rcRemote
+    let (exe, args) =
+              maybe id sshCommand rcRemote
             $ userWrapper rcUser
             $ sudoWrapper rcSudo
-            $ exeAction rcImage
+            (executablePath rcImage, [actionName])
     send $ showPair "ACT" actionName
-    pipe send pipeChunksEither cmd input
+    pipe send exe args input
 
     where
-
-    sshWrapper Nothing val = val
-    sshWrapper (Just (addr, port)) val =
-        let quotedVal = show val
-         in [str|ssh -T -p #{port} -o "StrictHostKeyChecking off" #{addr} #{quotedVal}|]
 
     -- XXX we should use either user wrapper or sudo wrapper, not both. If we
     -- are using userWrapper then we know we are sudo capable and can use sudo
     -- directly.
 
-    -- Does not run the shell profile but runs the rc file
-    userWrapper Nothing val = val
-    userWrapper (Just username) val =
-        let quotedVal = show val
-         in [str|sudo su #{username} -c #{quotedVal}|]
+    -- Does not run the shell profile but runs the rc file. su passes the
+    -- command to the shell of the user.
+    userWrapper Nothing cmd = cmd
+    userWrapper (Just username) (cmd, args) =
+        ("sudo", ["su", username, "-c", shellCommand cmd args])
 
-    sudoWrapper False val = val
-    sudoWrapper True val = [str|sudo #{val}|]
-
-    exeAction exeObj =
-        let ePath = executablePath exeObj
-         in [str|#{ePath} #{actionName}|]
+    sudoWrapper False cmd = cmd
+    sudoWrapper True (cmd, args) = ("sudo", cmd : args)
 
 -- | Make a RPC call at the remote host specified by the first argument.
 --
