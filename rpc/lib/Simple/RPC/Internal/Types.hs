@@ -65,8 +65,8 @@ module Simple.RPC.Internal.Types
 
 import Control.Exception (Exception(..), throwIO)
 import Data.Aeson (ToJSON, FromJSON, toJSON, fromJSON)
+import Data.Foldable (toList)
 import Data.Functor.Identity (runIdentity)
-import Data.Vector ((!?))
 import Data.Word (Word8)
 import Streamly.Data.Array (Array)
 import Streamly.Data.Stream (Stream)
@@ -76,7 +76,6 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Bifunctor
 import qualified Data.HashMap.Strict as HM
-import qualified Data.Vector as Vector
 import qualified Streamly.Data.Array as Array
 import qualified Streamly.Data.Stream as Stream
 import qualified Streamly.External.ByteString as StreamlyBS
@@ -439,9 +438,9 @@ resultFromIR val =
 
 -- | @irArgs n ir@ returns the elements of the IR array @ir@. Raise an
 -- 'InvalidInput' exception if @ir@ is not an array of @n@ elements.
-irArgs :: Int -> IntermediateRep -> IO (Vector.Vector IntermediateRep)
+irArgs :: Int -> IntermediateRep -> IO [IntermediateRep]
 irArgs n (Json.Array vec)
-    | Vector.length vec == n = pure vec
+    | length vec == n = pure (toList vec)
 irArgs n ir =
     throwIO
         $ InvalidInput
@@ -451,11 +450,11 @@ irArgs n ir =
 -- | @irArg args i@ decodes the element at index @i@ of the arguments returned
 -- by 'irArgs'. Raise an 'InvalidInput' exception if the index is out of
 -- bounds or the element cannot be decoded to the required type.
-irArg :: FromJSON a => Vector.Vector IntermediateRep -> Int -> IO a
+irArg :: FromJSON a => [IntermediateRep] -> Int -> IO a
 irArg args i =
-    case args !? i of
-        Nothing -> throwIO $ InvalidInput $ "missing argument " ++ show i
-        Just v ->
+    case drop i args of
+        [] -> throwIO $ InvalidInput $ "missing argument " ++ show i
+        v : _ ->
             case fromJSON v of
                 Json.Error err ->
                     throwIO
@@ -465,7 +464,7 @@ irArg args i =
 
 -- | Create an array in IR from a list of IR Haskell values.
 createArr :: [IntermediateRep] -> IntermediateRep
-createArr = Json.Array . Vector.fromList
+createArr = toJSON
 
 -------------------------------------------------------------------------------
 -- Key-value maps in IR

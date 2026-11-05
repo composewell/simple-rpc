@@ -60,7 +60,6 @@ library
                     , streamly-process
                     , template-haskell
                     , aeson
-                    , vector
                     , filepath
                     , unordered-containers
     hs-source-dirs:   lib
