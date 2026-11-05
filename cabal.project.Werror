@@ -1,0 +1,12 @@
+-- Fail the build on any warning in the local packages.
+
+import: cabal.project.ci
+
+package simple-rpc
+  ghc-options: -Werror
+
+package simple-rpc-generate
+  ghc-options: -Werror
+
+package example
+  ghc-options: -Werror

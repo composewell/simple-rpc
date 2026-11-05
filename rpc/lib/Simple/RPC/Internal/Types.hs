@@ -9,12 +9,12 @@ module Simple.RPC.Internal.Types
     ( -- * Intermediate Representation (IR)
       IntermediateRep
     , toIntermediateRep
-    , fromIntermediateRep
+    , resultFromIR
 
     -- ** IR Arrays
     , createArr
-    , arrIndex
-    , ensureNullArray
+    , irArgs
+    , irArg
 
     -- ** IR Maps
     , createObj
@@ -24,8 +24,9 @@ module Simple.RPC.Internal.Types
     , toBinStream
     , toChunkStream
     , fromBinStream
-    , irFromString
+    , irFromArray
     , irToString
+    , decodeUtf8Array
 
     -- * Symbols
     , RpcEval(..)
@@ -54,34 +55,82 @@ module Simple.RPC.Internal.Types
     -- * RPC
     , Runner
 
+    -- * Exceptions
+    , RpcException(..)
     ) where
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Imports
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
+import Control.Exception (Exception(..), throwIO)
 import Data.Aeson (ToJSON, FromJSON, toJSON, fromJSON)
-import Data.Function ((&))
-import Data.Vector ((!?))
+import Data.Foldable (toList)
+import Data.Functor.Identity (runIdentity)
 import Data.Word (Word8)
+import Streamly.Data.Array (Array)
 import Streamly.Data.Stream (Stream)
 
 import qualified Data.Aeson as Json
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Bifunctor
-import qualified Data.ByteString.Lazy as BSL
-import qualified Data.ByteString.Lazy.Char8 as BSLC
-import qualified Data.HashMap.Strict as HM
-import qualified Data.Vector as Vector
+import qualified Data.Map.Strict as Map
 import qualified Streamly.Data.Array as Array
 import qualified Streamly.Data.Stream as Stream
+import qualified Streamly.External.ByteString as StreamlyBS
+import qualified Streamly.External.ByteString.Lazy as StreamlyBSL
+import qualified Streamly.Unicode.Stream as Unicode
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
+-- Exceptions
+-------------------------------------------------------------------------------
+
+-- | Exceptions raised by the RPC client and the RPC server.
+data RpcException
+    = EndpointNotFound String
+      -- ^ The server does not have an endpoint with this name.
+    | InvalidInput String
+      -- ^ The server could not decode the input of the endpoint, the
+      -- argument is the error message.
+    | InvalidOutput String
+      -- ^ The client could not decode the last output line of the server,
+      -- the argument is the error message.
+    | EmptyOutput
+      -- ^ The server did not print any output line.
+    | VersionMismatch String String String
+      -- ^ @VersionMismatch executable expected actual@: the server
+      -- executable printed the version @actual@ instead of @expected@.
+    | InvalidUsage [String]
+      -- ^ The server executable was called with these arguments, it accepts
+      -- at most one argument.
+    deriving (Eq, Show)
+
+instance Exception RpcException where
+    displayException e =
+        case e of
+            EndpointNotFound name -> "RPC endpoint not found: " ++ name
+            InvalidInput msg -> "Invalid RPC input: " ++ msg
+            InvalidOutput msg -> "Invalid RPC output: " ++ msg
+            EmptyOutput -> "The RPC server did not print an output line"
+            VersionMismatch exe expected actual ->
+                "Version mismatch for " ++ exe
+                    ++ ", expected: " ++ show expected
+                    ++ ", got: " ++ show actual
+            InvalidUsage args ->
+                "Usage: <executable> [<endpoint>], got the arguments: "
+                    ++ show args
+
+-------------------------------------------------------------------------------
 -- Running Config
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
--- | RPC server executable name and version.
+-- | RPC server executable path and version.
+--
+-- Before each call, the client runs the executable without arguments and
+-- compares its stdout with 'executableVersion'. The executable must print
+-- exactly this string, 'Simple.RPC.Server.mainWith' prints it without a
+-- trailing newline.
 data Executable =
     Executable
         { executablePath :: FilePath
@@ -93,7 +142,8 @@ data Executable =
 -- need to have a single mechanism.
 
 -- | RPC server specification: server, port, username, executable location,
--- privileges to use etc.
+-- privileges to use etc. See 'defaultConfig' and the setters for the meaning
+-- of the fields.
 data RunningConfig =
     RunningConfig
         { rcRemote :: Maybe (String, String)
@@ -110,8 +160,15 @@ data RunningConfig =
 -- match with the sha256 of local image. Image can be named with a platform
 -- suffix so that we can have cross platform access.
 
--- | Note we can use rpc to local host as well for executing a function as some
--- other user on the same host without using sudo.
+-- | A config that runs the executable on the local host as the current user,
+-- without flags, and logs with 'putStrLn':
+--
+-- * 'rcRemote' is 'Nothing', the executable is run without ssh,
+-- * 'rcUser' is 'Nothing',
+-- * 'rcSudo' is 'False',
+-- * 'rcImage' is the argument,
+-- * 'rcImageFlags' is @""@,
+-- * 'rcLogger' is 'putStrLn'.
 defaultConfig :: Executable -> RunningConfig
 defaultConfig exe =
     RunningConfig
@@ -133,39 +190,76 @@ defaultConfig exe =
 setImage :: Executable -> RunningConfig -> RunningConfig
 setImage x rc = rc { rcImage = x }
 
--- | Use these flags when invoking the RPC server image.
+-- | Use these flags when invoking the RPC server image for an endpoint call.
+-- The flags are split into words at white space, a word cannot contain white
+-- space or quotes. The version check invokes the image without the flags.
+--
+-- The server accepts one argument, the endpoint name, therefore the flags
+-- can only be options that the server program does not see, e.g. GHC RTS
+-- options @+RTS -N -RTS@ if the server is linked with @-rtsopts@.
 --
 -- Default is "" i.e. no flags.
 setImageFlags :: String -> RunningConfig -> RunningConfig
 setImageFlags x rc = rc { rcImageFlags = x }
 
--- | Modify the server name to use for ssh access.
+-- | @setRemote (address, port)@ sets the config to run the executable on a
+-- remote host. An endpoint call then runs
+-- @ssh -T -p port -o "StrictHostKeyChecking off" address command@. The
+-- address is passed to ssh as it is, e.g. @user\@host@.
 --
--- Default is local host IP address "127.0.0.1".
+-- The remote command is run by the shell of the ssh user, the client quotes
+-- it for a POSIX shell. The remote host must have a POSIX shell as the
+-- shell of the ssh user, a Windows host is not supported. The client can be
+-- on Windows, it runs @ssh.exe@.
+--
+-- Default is 'Nothing', the executable is run on the local host without ssh.
+--
+-- /Dependencies/: @ssh@ on the local host, a POSIX shell for the ssh user on
+-- the remote host.
 setRemote :: (String, String) -> RunningConfig -> RunningConfig
 setRemote x rc = rc { rcRemote = Just x }
 
--- | Modify the ssh username to use for running the endpoint.
+-- | Set the config to run the endpoint as this user. An endpoint call then
+-- runs @sudo su user -c command@. The current user, or the ssh user if
+-- 'setRemote' is used, must be allowed to run @sudo su@. @su@ runs the
+-- command with the shell of the user, the client quotes it for a POSIX
+-- shell. The version check is run as the current user.
 --
--- Default is the current user.
+-- Without 'setRemote', @sudo@ and @su@ are run on the local host, which is
+-- not supported on Windows.
+--
+-- Default is 'Nothing', the endpoint is run as the current user.
+--
+-- /Dependencies/: @sudo@ and @su@ on the host that runs the executable, a
+-- POSIX shell for the user.
 setUser :: String -> RunningConfig -> RunningConfig
 setUser x rc = rc { rcUser = Just x }
 
--- | Use root privileges for running the endpoint.
+-- | Set the config to run the endpoint with @sudo@. An endpoint call then
+-- runs @sudo executable ...@. When 'setUser' is also used, @sudo
+-- executable ...@ is the command run by @su@, the user must be allowed to
+-- run @sudo@.
+--
+-- Without 'setRemote', @sudo@ is run on the local host, which is not
+-- supported on Windows.
 --
 -- Default is 'False'.
+--
+-- /Dependencies/: @sudo@ on the host that runs the executable.
 useSudo :: Bool -> RunningConfig -> RunningConfig
 useSudo x rc = rc { rcSudo = x }
 
--- | Use the supplied logger to for log and trace.
+-- | Use the supplied logger for log and trace. The client logs the commands,
+-- the input, each output line of the server and each stderr line of the
+-- server.
 --
 -- Default is 'putStrLn'.
 setLogger :: (String -> IO ()) -> RunningConfig -> RunningConfig
 setLogger x rc = rc { rcLogger = x }
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Symbols
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- XXX Call?
 
@@ -198,7 +292,7 @@ data RpcEval ir =
 
 -- | Represents an RPC endpoint consisting of:
 --
--- * @run@ is the same as the original function
+-- * @direct@ is the same as the original function
 -- * @call@ takes a 'Runner' and converts it into a local function call. The
 -- arguments from the local call are converted to IR and supplied to the
 -- Runner, similarly the result from the Runner is converted to Haskell type
@@ -215,7 +309,9 @@ data RpcSymbol ir typ =
         , evaluator :: RpcEval ir     -- server side generic (using IR) call
         }
 
--- | Get the name of the RPC endpoint.
+-- | Get the name of the RPC endpoint, @Module.name@, where @Module@ is the
+-- module that has the 'Simple.RPC.Common.rpcExport' splice and @name@ is the
+-- name given to 'Simple.RPC.Common.rpcExport'.
 rpcName :: RpcSymbol ir typ -> String
 rpcName = symbol . evaluator
 
@@ -232,79 +328,146 @@ rpcServiceFunction = eval . evaluator
 rpcCallUsing :: RpcSymbol ir typ -> Runner ir -> typ
 rpcCallUsing = call
 
--- XXX Map instead of HashMap?
 -- XXX rename to ServiceMap
 
--- | A map of symbol names and corresponding evals.
-type RpcMap ir = HM.HashMap String (ir -> IO ir)
+-- | A map of endpoint names and the corresponding server side wrappers.
+type RpcMap ir = Map.Map String (ir -> IO ir)
 
 -- XXX serviceMapFromList
 
--- | Create a map from a list of symbol name, eval pairs.
+-- | Create a map from a list of server side wrappers, use 'evaluator' to get
+-- the wrapper of an t'RpcSymbol'. If two wrappers have the same endpoint name,
+-- the map has the one later in the list.
 createRpcMap :: [RpcEval ir] -> RpcMap ir
-createRpcMap = HM.fromList . map (\x -> (symbol x, eval x))
+createRpcMap = Map.fromList . map (\x -> (symbol x, eval x))
 
 -- XXX lookupService
 
 -- | Lookup a symbol in a map.
 lookupRpcSymbol :: String -> RpcMap ir -> Maybe (ir -> IO ir)
-lookupRpcSymbol = HM.lookup
+lookupRpcSymbol = Map.lookup
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Pretty printing
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- | Format a tag and its value for pretty printing.
+--
+-- >>> showPair "CMD" "ls -l"
+-- "[CMD] ls -l"
 showPair :: String -> String -> String
 showPair tag val = "[" ++ tag ++ "] " ++ val
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Serialized values
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
+-- | The intermediate representation of the arguments and the results, a JSON
+-- value.
 type IntermediateRep = Json.Value
 
---------------------------------------------------------------------------------
--- Conerting Haskell values to/from IR
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
+-- Conversions of IR
+-------------------------------------------------------------------------------
 
+-- | Convert the Haskell representation of IR (i.e. Json) to a byte stream of
+-- its JSON encoding.
+--
+-- The stream is generated from the chunks of the lazy encoding, the time is
+-- linear in the size of the encoding.
+{-# INLINE toBinStream #-}
+toBinStream :: Monad m => IntermediateRep -> Stream m Word8
+toBinStream input =
+    Stream.unfold StreamlyBSL.reader (Json.encode input)
+
+-- | Convert the Haskell representation of IR (i.e. Json) to a stream of
+-- arrays of its JSON encoding, one array for each chunk of the lazy encoding.
+toChunkStream :: IntermediateRep -> Stream IO (Array Word8)
+toChunkStream input =
+    StreamlyBSL.toChunks (Json.encode input)
+
+-- | Convert a byte stream of IR (i.e. Json) to its Haskell representation.
+fromBinStream :: Stream IO Word8 -> IO IntermediateRep
+fromBinStream input = do
+    res <- Stream.fold StreamlyBS.write input
+    case Json.decodeStrict res of
+        Nothing -> error "Unable to decode"
+        Just x -> pure x
+
+-- | Decode a UTF-8 encoded byte array to a String, replacing invalid bytes
+-- with the Unicode replacement character. Used for logging.
+decodeUtf8Array :: Array Word8 -> String
+decodeUtf8Array arr =
+    runIdentity $ Stream.toList $ Unicode.decodeUtf8 $ Array.read arr
+
+-- | Decode the UTF-8 encoded JSON representation of IR in a byte array.
+-- Returns the decoding error message on failure.
+irFromArray :: Array Word8 -> IO (Either String IntermediateRep)
+irFromArray arr =
+    pure $ Json.eitherDecodeStrict' (StreamlyBS.fromArray arr)
+
+-- | Convert the Haskell representation of IR (i.e. Json) to String. Used for
+-- logging.
+irToString :: IntermediateRep -> String
+irToString input =
+    runIdentity $ Stream.toList $ Unicode.decodeUtf8 $ toBinStream input
+
+-------------------------------------------------------------------------------
+-- Conerting Haskell values to/from IR
+-------------------------------------------------------------------------------
+
+-- | Convert a Haskell value to IR, the same as 'toJSON'.
+--
+-- >>> toIntermediateRep (1 :: Int, "a")
+-- Array [Number 1.0,String "a"]
 toIntermediateRep :: ToJSON a => a -> IntermediateRep
 toIntermediateRep = toJSON
 
-fromIntermediateRep :: FromJSON a => IntermediateRep -> a
-fromIntermediateRep val =
+-- | Decode the result of an endpoint from IR. Raise an 'InvalidOutput'
+-- exception if the IR cannot be decoded to the required type.
+resultFromIR :: FromJSON a => IntermediateRep -> IO a
+resultFromIR val =
     case fromJSON val of
-        Json.Error err -> error err
-        Json.Success a -> a
+        Json.Error err -> throwIO $ InvalidOutput err
+        Json.Success a -> pure a
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Arrays in IR
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
--- | Decode a null array in IR as the supplied value. If the array is
--- not null then it is an error.
-ensureNullArray :: IntermediateRep -> a -> a
-ensureNullArray (Json.Array vec) act =
-    if Vector.length vec == 0
-    then act
-    else error "Input is not an empty"
-ensureNullArray _ _ = error "Value is not an array type"
+-- | @irArgs n ir@ returns the elements of the IR array @ir@. Raise an
+-- 'InvalidInput' exception if @ir@ is not an array of @n@ elements.
+irArgs :: Int -> IntermediateRep -> IO [IntermediateRep]
+irArgs n (Json.Array vec)
+    | length vec == n = pure (toList vec)
+irArgs n ir =
+    throwIO
+        $ InvalidInput
+        $ "expected an array of " ++ show n ++ " arguments, got: "
+            ++ irToString ir
 
--- | Retrieve the value at the given index in an IR array.
-arrIndex :: FromJSON a => IntermediateRep -> Int -> a
-arrIndex (Json.Array vec) i =
-    case vec !? i of
-        Nothing -> error $ "Could not find arg at position: " ++ show i
-        Just val -> fromIntermediateRep val
-arrIndex _ _ = error "Value is not an array type"
+-- | @irArg args i@ decodes the element at index @i@ of the arguments returned
+-- by 'irArgs'. Raise an 'InvalidInput' exception if the index is out of
+-- bounds or the element cannot be decoded to the required type.
+irArg :: FromJSON a => [IntermediateRep] -> Int -> IO a
+irArg args i =
+    case drop i args of
+        [] -> throwIO $ InvalidInput $ "missing argument " ++ show i
+        v : _ ->
+            case fromJSON v of
+                Json.Error err ->
+                    throwIO
+                        $ InvalidInput
+                        $ "argument " ++ show i ++ ": " ++ err
+                Json.Success a -> pure a
 
 -- | Create an array in IR from a list of IR Haskell values.
 createArr :: [IntermediateRep] -> IntermediateRep
-createArr = Json.Array . Vector.fromList
+createArr = toJSON
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Key-value maps in IR
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 -- XXX swap the arguments?
 
@@ -313,53 +476,13 @@ createArr = Json.Array . Vector.fromList
 objLookup :: FromJSON a => IntermediateRep -> String -> a
 objLookup (Json.Object obj) kStr =
     case KeyMap.lookup (Key.fromString kStr) obj of
-        Just val -> fromIntermediateRep val
+        Just val ->
+            case fromJSON val of
+                Json.Error err -> error err
+                Json.Success a -> a
         Nothing -> error $ "Could not find: " ++ kStr
 objLookup _ _ = error "Value is not an object type"
 
 -- | Convert (String, IR) key-value pairs to a map in IR.
 createObj :: [(String, IntermediateRep)] -> IntermediateRep
 createObj kv = Json.object $ map (Data.Bifunctor.first Key.fromString) kv
-
---------------------------------------------------------------------------------
--- Conversions of IR
---------------------------------------------------------------------------------
-
--- | Convert the Haskell representation of IR (i.e. Json) to a byte stream.
-toBinStream :: Monad m => IntermediateRep -> Stream m Word8
-toBinStream input =
-    Stream.enumerateFromTo 0 (len - 1)
-        & fmap (BSL.index bsl)
-
-    where
-    bsl = Json.encode input
-    len = BSL.length bsl
-
--- TODO: Convert Bytestring to Array directly
-
--- | Convert the Haskell representation of IR (i.e. Json) to a stream of
--- arrays.
-toChunkStream :: IntermediateRep -> Stream IO (Array.Array Word8)
-toChunkStream input =
-    toBinStream input
-        & Array.chunksOf 1024
-
--- | Convert a byte stream of IR (i.e. Json) to its Haskell representation.
-fromBinStream :: Stream IO Word8 -> IO IntermediateRep
-fromBinStream input = do
-    res <- Stream.toList input
-    case Json.decode $ BSL.pack res of
-        Nothing -> error "Unable to decode"
-        Just x -> pure x
-
--- | Convert the Latin1 Char String representation of IR (i.e. Json) to
--- its Haskell representation.
-irFromString :: String -> IntermediateRep
-irFromString input = do
-    case Json.decode $ BSLC.pack input of
-        Nothing -> error $ "Unable to decode: " ++ input
-        Just x -> x
-
--- | Convert the Haskell representation of IR (i.e. Json) to String.
-irToString :: IntermediateRep -> String
-irToString input = BSLC.unpack $ Json.encode input

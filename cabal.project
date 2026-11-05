@@ -1,5 +1,8 @@
 packages: rpc, example, generate
 
+-- Cap GHC heap usage so that builds do not exhaust the machine memory
+flags: +limit-build-mem
+
 -- source-repository-package
 --    type: git
 --    location: https://github.com/composewell/streamly-coreutils.git

@@ -9,17 +9,20 @@ import qualified Module2 as Module2
 import qualified Module3 as Module3
 
 import Module0
-import Simple.RPC.Client
-import Simple.RPC.Server
+import Simple.RPC
 
 top' :: IO ()
 top' = do
     exePath <- getExecutablePath
     let exe = Executable exePath exeVersion
     run Module3.bottom
-    call Module3.helloWorld (with (exec exe & asUser "user"))
-    call Module2.printFromModule2 (with (exec exe & asUser "user")) "Hello"
-    call Module2.printFromModule2
-        (with (exec remoteExe & onSSH localhost & asUser "cw-portal"))
-        "World"
+    runAt (defaultConfig exe & setUser "user") Module3.helloWorld
+    runAt
+        (defaultConfig exe & setUser "user")
+        Module2.printFromModule2 "Hello"
+    runAt
+        (defaultConfig remoteExe
+            & setRemote localhost
+            & setUser "cw-portal")
+        Module2.printFromModule2 "World"
 $(rpcify 'top')

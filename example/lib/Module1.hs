@@ -2,7 +2,7 @@ module Module1
     ( printFromModule1
     ) where
 
-import Simple.RPC.Server
+import Simple.RPC
 
 raw_printFromModule1 :: Int -> String -> Bool -> IO (Int, String, Bool)
 raw_printFromModule1 val1 val2 val3 = do

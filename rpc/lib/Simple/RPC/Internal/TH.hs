@@ -5,16 +5,16 @@ module Simple.RPC.Internal.TH
     , rpcify
     ) where
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Imports
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 import Language.Haskell.TH
 import Simple.RPC.Internal.Types
 
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Functions
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 
 getFunctionType :: Name -> Q Type
 getFunctionType _func = do
@@ -31,53 +31,79 @@ getNumArgs :: Type -> Int
 getNumArgs typ = length (breakTypeOnArrow typ) - 1
 
 -- | @rpcExport origName rpcName@, creates a toplevel value definition with
--- the name @rpcName@, of type 'RpcSymbol' representing an RPC endpoint.
+-- the name @rpcName@, of type t'RpcSymbol' representing an RPC endpoint.
+-- The endpoint name is @Module.rpcName@, where @Module@ is the current
+-- module.
 --
--- See the details under the docs of 'RpcSymbol'.
+-- For example:
+--
+-- > add :: Int -> Int -> IO Int
+-- > add x y = pure (x + y)
+-- > $(rpcExport "add" "addRpc")
+--
+-- @origName@ must be a function in scope with a monomorphic type of the form
+-- @a1 -> ... -> an -> IO r@, @n >= 0@, where every argument type and @r@
+-- have 'Data.Aeson.ToJSON' and 'Data.Aeson.FromJSON' instances. A type
+-- synonym for a function type, in the whole type or in the result type, is
+-- not expanded and does not compile.
+--
+-- The server side wrapper raises an 'InvalidInput' exception if the input is
+-- not an array of @n@ values that decode to the argument types, before it
+-- calls the function.
+--
+-- See the details under the docs of t'RpcSymbol'.
 rpcExport :: String -> String -> Q [Dec]
 rpcExport oldFuncName newFuncName = do
     modName <- loc_module <$> location
 
     let endpoint = newFuncName
         endpointWithMod = modName ++ "." ++ endpoint
-        n_raw = mkName oldFuncName
         n_endpoint = mkName endpoint
-        n_runner = mkName "runner"
-        n_val = mkName "val"
         appEArgs = foldl appE
 
+    -- Resolve the name, a name made by mkName would be captured by a local
+    -- variable of the same name in the generated code.
+    mRaw <- lookupValueName oldFuncName
+    n_raw <-
+        case mRaw of
+            Just n -> pure n
+            Nothing -> fail $ "rpcExport: not in scope: " ++ oldFuncName
     typ <- getFunctionType n_raw
 
     let numArgs = getNumArgs typ
         enumArgs = [0..(numArgs - 1)]
-        strArgs = ('x':) . show <$> enumArgs
-        patArgs = varP . mkName <$> strArgs
-        varArgs = varE . mkName <$> strArgs
-        arrIndexTH i =
-            [|arrIndex $(varE n_val) $(litE (integerL (fromIntegral i)))|]
-        parsedArgs = map arrIndexTH enumArgs
+    n_runner <- newName "runner"
+    n_val <- newName "val"
+    n_args <- newName "args"
+    argNames <- mapM (\i -> newName ('x' : show i)) enumArgs
+    let patArgs = map varP argNames
+        varArgs = map varE argNames
 
-
-    let evalExp1 =
-            lamE
-                [(varP n_val)]
-                [|toIntermediateRep <$> $(appEArgs (varE n_raw) parsedArgs)|]
-        evalExp0 =
-            [|\x -> ensureNullArray x (toIntermediateRep <$> $(varE n_raw))|]
+    -- Decode all the arguments before calling the function, so that an
+    -- invalid input raises an exception before any effect of the function.
+    let intE i = litE (integerL (fromIntegral i))
+        bindArg i n = bindS (varP n) [|irArg $(varE n_args) $(intE i)|]
+        argsPat = if numArgs == 0 then wildP else varP n_args
         evalExp =
-            if numArgs == 0
-            then evalExp0
-            else evalExp1
+            lamE [varP n_val]
+                $ doE
+                $ bindS argsPat [|irArgs $(intE numArgs) $(varE n_val)|]
+                    : zipWith bindArg enumArgs argNames
+                    ++ [ noBindS
+                            [|toIntermediateRep
+                                <$> $(appEArgs (varE n_raw) varArgs)|]
+                       ]
 
     let toIntermediateRepTH k = [|toIntermediateRep $(k)|]
-        encodedInput = [| createArr $(listE (map toIntermediateRepTH varArgs))|]
+        encodedInput =
+            [|createArr $(listE (map toIntermediateRepTH varArgs))|]
 
         runningExp =
             lamE
                 (varP n_runner:patArgs)
-                [|fromIntermediateRep
-                     <$> $(varE n_runner)
-                             $(stringE endpointWithMod) $(encodedInput)|]
+                [|$(varE n_runner)
+                     $(stringE endpointWithMod) $(encodedInput)
+                     >>= resultFromIR|]
 
     let rpcSymbolExp =
             [|RpcSymbol
