@@ -79,9 +79,6 @@ import qualified Data.Bifunctor
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.HashMap.Strict as HM
-import qualified Data.Text.Encoding.Error as Text
-import qualified Data.Text.Lazy as TextL
-import qualified Data.Text.Lazy.Encoding as TextL
 import qualified Data.Vector as Vector
 import qualified Streamly.Data.Array as Array
 import qualified Streamly.Data.Stream as Stream
@@ -420,7 +417,7 @@ irFromArray arr =
 -- logging.
 irToString :: IntermediateRep -> String
 irToString input =
-    TextL.unpack $ TextL.decodeUtf8With Text.lenientDecode $ Json.encode input
+    runIdentity $ Stream.toList $ Unicode.decodeUtf8 $ toBinStream input
 
 -------------------------------------------------------------------------------
 -- Conerting Haskell values to/from IR
