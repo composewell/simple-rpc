@@ -69,7 +69,6 @@ import Data.Function ((&))
 import Data.Functor.Identity (runIdentity)
 import Data.Vector ((!?))
 import Data.Word (Word8)
-import Foreign.Ptr (castPtr)
 import Streamly.Data.Array (Array)
 import Streamly.Data.Stream (Stream)
 
@@ -78,7 +77,6 @@ import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Bifunctor
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Unsafe as BS.Unsafe
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Text.Encoding.Error as Text
@@ -88,8 +86,7 @@ import qualified Data.Vector as Vector
 import qualified Streamly.Data.Array as Array
 import qualified Streamly.Data.Stream as Stream
 import qualified Streamly.Data.Unfold as Unfold
-import qualified Streamly.Internal.Data.Array as Array
-    (fromPtrN, unsafePinnedAsPtr)
+import qualified Streamly.External.ByteString as StreamlyBS
 import qualified Streamly.Unicode.Stream as Unicode
 
 -------------------------------------------------------------------------------
@@ -392,18 +389,12 @@ toBinStream input =
     Stream.fromList (BSL.toChunks (Json.encode input))
         & Stream.unfoldEach (Unfold.lmap BS.unpack Unfold.fromList)
 
--- | Copy a ByteString to an array.
-byteStringToArray :: BS.ByteString -> IO (Array Word8)
-byteStringToArray c =
-    BS.Unsafe.unsafeUseAsCStringLen c
-        $ \(p, n) -> Array.fromPtrN n (castPtr p)
-
 -- | Convert the Haskell representation of IR (i.e. Json) to a stream of
 -- arrays of its JSON encoding, one array for each chunk of the lazy encoding.
 toChunkStream :: IntermediateRep -> Stream IO (Array Word8)
 toChunkStream input =
     Stream.fromList (BSL.toChunks (Json.encode input))
-        & Stream.mapM byteStringToArray
+        & fmap StreamlyBS.toArray
 
 -- | Convert a byte stream of IR (i.e. Json) to its Haskell representation.
 fromBinStream :: Stream IO Word8 -> IO IntermediateRep
@@ -422,11 +413,8 @@ decodeUtf8Array arr =
 -- | Decode the UTF-8 encoded JSON representation of IR in a byte array.
 -- Returns the decoding error message on failure.
 irFromArray :: Array Word8 -> IO (Either String IntermediateRep)
-irFromArray arr = do
-    bs <-
-        Array.unsafePinnedAsPtr arr
-            $ \p n -> BS.packCStringLen (castPtr p, n)
-    pure $ Json.eitherDecodeStrict' bs
+irFromArray arr =
+    pure $ Json.eitherDecodeStrict' (StreamlyBS.fromArray arr)
 
 -- | Convert the Haskell representation of IR (i.e. Json) to String. Used for
 -- logging.

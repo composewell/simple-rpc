@@ -55,6 +55,7 @@ library
     other-modules:   Simple.RPC.Internal.TH
                    , Simple.RPC.Internal.Types
     build-depends:    base
+                    , streamly-bytestring
                     , streamly-core
                     , streamly-process
                     , template-haskell
