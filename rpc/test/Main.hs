@@ -26,7 +26,7 @@ import System.Info (os)
 import System.Process
     ( CreateProcess(std_in, std_out), StdStream(..), callProcess
     , createProcess, proc, readProcess, waitForProcess )
-import Test.QuickCheck (forAll, ioProperty, withMaxSuccess)
+import Test.QuickCheck (forAll, ioProperty)
 
 import qualified Data.Aeson as Json
 import qualified Data.ByteString as BS
@@ -60,17 +60,25 @@ loggingConfig env = do
     let cfg = serverConfig env & setLogger (\s -> modifyIORef ref (s:))
     pure (cfg, reverse <$> readIORef ref)
 
+-- | The messages that the top level exception handler may print for an
+-- exception. GHC 9.10 and later print 'displayException', earlier versions
+-- print 'show'.
+exceptionMessages :: RpcException -> [String]
+exceptionMessages e = [displayException e, show e]
+
 -- | Check that the stderr of the server has the message of the exception.
 assertStderr :: BS.ByteString -> RpcException -> IO ()
 assertStderr err e =
     assertBool ("stderr: " ++ show err)
-        (utf8 (displayException e) `BS.isInfixOf` err)
+        (any ((`BS.isInfixOf` err) . utf8) (exceptionMessages e))
 
--- | Check that the stderr of the server has an 'InvalidInput' message.
+-- | Check that the stderr of the server has an 'InvalidInput' message, in
+-- the 'displayException' or the 'show' form.
 assertInvalidInput :: BS.ByteString -> IO ()
 assertInvalidInput err =
     assertBool ("stderr: " ++ show err)
-        (utf8 "Invalid RPC input: " `BS.isInfixOf` err)
+        (any ((`BS.isInfixOf` err) . utf8)
+            ["Invalid RPC input: ", "InvalidInput \""])
 
 -- | Print-able ASCII characters and the control characters.
 asciiString :: QC.Gen String
@@ -78,6 +86,10 @@ asciiString = QC.listOf (QC.choose ('\0', '\127'))
 
 isWindows :: Bool
 isWindows = os == "mingw32"
+
+-- | The line end that a handle in text mode writes for a '\n'.
+newline :: String
+newline = if isWindows then "\r\n" else "\n"
 
 -- | The permission bits of a file as shown by @ls -l@, e.g. @rwxr-xr-x@.
 -- Uses @sh@ for the same view of the file system as the fake ssh.
@@ -206,7 +218,9 @@ serverTests env =
             (BSC.pack
                 "[SERVER] TestFunctions.printPartial [\"abc\"]\nabc\n\"abc\"")
             out
-        assertEqual "stderr" (BSC.pack "printPartial on stderr\n") err
+        -- The endpoint writes stderr in text mode, CRLF on Windows.
+        assertEqual "stderr"
+            (BSC.pack ("printPartial on stderr" ++ newline)) err
 
     , test "invokeFunction reads the input up to the first newline" $ do
         (code, out, _) <-
@@ -329,9 +343,9 @@ clientTests env =
 
     , test "runAt round trips Int and ASCII String arguments" $ do
         let cfg = serverConfig env
-        property $ withMaxSuccess 20 $ \(x :: Int) ->
+        propertyN 20 $ \(x :: Int) ->
             ioProperty $ (== x) <$> runAt cfg echoInt x
-        property $ withMaxSuccess 20 $ forAll asciiString $ \s ->
+        propertyN 20 $ forAll asciiString $ \s ->
             ioProperty $ (== s) <$> runAt cfg echoString s
 
     , test "runAt returns the result after partial endpoint output" $ do
@@ -351,7 +365,7 @@ clientTests env =
         assertBool ("STDOUT: " ++ show logged)
             (has (== "[STDOUT] \"abc\""))
         assertBool ("STDERR: " ++ show logged)
-            (has (== "[STDERR] printPartial on stderr"))
+            (has (== "[STDERR] printPartial on stderr" ++ init newline))
 
     , test "runAt raises ProcessFailure when the endpoint fails" $
         assertThrows "failing" (\(ProcessFailure n) -> n == 1)
@@ -381,10 +395,11 @@ clientTests env =
                 (cfg & setImage (Executable path testVersion))
                 echoString (replicate 1000000 'x'))
         logged <- getLog
-        let msg = displayException (EndpointNotFound "TestFunctions.nope")
+        let msgs = exceptionMessages (EndpointNotFound "TestFunctions.nope")
             isErr l = "[STDERR]" `isPrefixOf` l
+            hasMsg l = any (`isInfixOf` l) msgs
         assertBool ("stderr logged: " ++ show (filter isErr logged))
-            (any (\l -> isErr l && msg `isInfixOf` l) logged)
+            (any (\l -> isErr l && hasMsg l) logged)
 
     , test "runAt raises VersionMismatch on a version mismatch" $
         assertThrows "version"
@@ -676,7 +691,7 @@ unicodeTests env =
 
     , test "runAt round trips Unicode String arguments" $ do
         let cfg = serverConfig env
-        property $ withMaxSuccess 20 $ forAll genUnicodeString $ \s ->
+        propertyN 20 $ forAll genUnicodeString $ \s ->
             ioProperty $ (== s) <$> runAt cfg echoString s
 
     , test "runAt logs the input as UTF-8 decoded text" $ do

@@ -11,6 +11,7 @@ module Harness
     , assertBool
     , assertThrows
     , property
+    , propertyN
     ) where
 
 -------------------------------------------------------------------------------
@@ -78,19 +79,23 @@ assertThrows msg p action = do
 seedRef :: IORef Int
 seedRef = unsafePerformIO (newIORef 0)
 
--- | Check a QuickCheck property with the seed given to 'runTests', raise a
--- 'TestFailure' exception if it fails.
-property :: Testable p => p -> IO ()
-property p = do
+-- | @propertyN n p@ checks the QuickCheck property @p@ on @n@ inputs with
+-- the seed given to 'runTests', raise a 'TestFailure' exception if it fails.
+propertyN :: Testable p => Int -> p -> IO ()
+propertyN n p = do
     seed <- readIORef seedRef
     let args =
             stdArgs
                 { replay = Just (mkQCGen seed, 0)
                 , chatty = False
-                , maxSuccess = 100
+                , maxSuccess = n
                 }
     r :: Result <- QC.quickCheckWithResult args p
     unless (isSuccess r) $ throwIO $ TestFailure (QC.output r)
+
+-- | Check a QuickCheck property on 100 inputs, see 'propertyN'.
+property :: Testable p => p -> IO ()
+property = propertyN 100
 
 -------------------------------------------------------------------------------
 -- Running
