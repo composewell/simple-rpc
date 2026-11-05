@@ -60,7 +60,6 @@ library
                     , streamly-process
                     , template-haskell
                     , aeson
-                    , bytestring
                     , vector
                     , filepath
                     , unordered-containers

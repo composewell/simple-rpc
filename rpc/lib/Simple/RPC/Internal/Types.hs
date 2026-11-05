@@ -65,7 +65,6 @@ module Simple.RPC.Internal.Types
 
 import Control.Exception (Exception(..), throwIO)
 import Data.Aeson (ToJSON, FromJSON, toJSON, fromJSON)
-import Data.Function ((&))
 import Data.Functor.Identity (runIdentity)
 import Data.Vector ((!?))
 import Data.Word (Word8)
@@ -76,14 +75,12 @@ import qualified Data.Aeson as Json
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Bifunctor
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BSL
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Vector as Vector
 import qualified Streamly.Data.Array as Array
 import qualified Streamly.Data.Stream as Stream
-import qualified Streamly.Data.Unfold as Unfold
 import qualified Streamly.External.ByteString as StreamlyBS
+import qualified Streamly.External.ByteString.Lazy as StreamlyBSL
 import qualified Streamly.Unicode.Stream as Unicode
 
 -------------------------------------------------------------------------------
@@ -383,21 +380,19 @@ type IntermediateRep = Json.Value
 {-# INLINE toBinStream #-}
 toBinStream :: Monad m => IntermediateRep -> Stream m Word8
 toBinStream input =
-    Stream.fromList (BSL.toChunks (Json.encode input))
-        & Stream.unfoldEach (Unfold.lmap BS.unpack Unfold.fromList)
+    Stream.unfold StreamlyBSL.reader (Json.encode input)
 
 -- | Convert the Haskell representation of IR (i.e. Json) to a stream of
 -- arrays of its JSON encoding, one array for each chunk of the lazy encoding.
 toChunkStream :: IntermediateRep -> Stream IO (Array Word8)
 toChunkStream input =
-    Stream.fromList (BSL.toChunks (Json.encode input))
-        & fmap StreamlyBS.toArray
+    StreamlyBSL.toChunks (Json.encode input)
 
 -- | Convert a byte stream of IR (i.e. Json) to its Haskell representation.
 fromBinStream :: Stream IO Word8 -> IO IntermediateRep
 fromBinStream input = do
-    res <- Stream.toList input
-    case Json.decode $ BSL.pack res of
+    res <- Stream.fold StreamlyBS.write input
+    case Json.decodeStrict res of
         Nothing -> error "Unable to decode"
         Just x -> pure x
 
