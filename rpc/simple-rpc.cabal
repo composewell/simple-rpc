@@ -61,7 +61,7 @@ library
                     , template-haskell
                     , aeson
                     , filepath
-                    , unordered-containers
+                    , containers
     hs-source-dirs:   lib
 
 test-suite simple-rpc-test
@@ -85,7 +85,7 @@ test-suite simple-rpc-test
                     , process >= 1.6.12
                     , streamly-core
                     , streamly-process
-                    , unordered-containers
+                    , containers
 
 benchmark simple-rpc-bench
     import: lib-options

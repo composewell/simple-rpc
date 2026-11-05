@@ -32,7 +32,7 @@ import qualified Data.Aeson as Json
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as BSL
-import qualified Data.HashMap.Strict as HM
+import qualified Data.Map.Strict as Map
 import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Data.Stream as Stream
 import qualified Test.QuickCheck as QC
@@ -152,11 +152,11 @@ serverTests env =
                 , "TestFunctions.replicateChar", "TestFunctions.three"
                 , "TestFunctions.valRpc", "TestFunctions.writeMarker"
                 ])
-            (sort (HM.keys rpcMap))
+            (Map.keys rpcMap)
 
     , test "evaluator in createRpcMap calls the function with IR" $ do
         let m = createRpcMap [evaluator add, evaluator constant]
-        case HM.lookup "TestFunctions.add" m of
+        case Map.lookup "TestFunctions.add" m of
             Nothing -> assertBool "add not found" False
             Just f -> do
                 r <- f (toIntermediateRep [2, 3 :: Int])
@@ -166,7 +166,7 @@ serverTests env =
                         InvalidInput _ -> True
                         _ -> False)
                     (f (toIntermediateRep [1 :: Int]))
-        case HM.lookup "TestFunctions.constant" m of
+        case Map.lookup "TestFunctions.constant" m of
             Nothing -> assertBool "constant not found" False
             Just f -> do
                 r <- f (toIntermediateRep ([] :: [Int]))

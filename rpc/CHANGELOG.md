@@ -4,8 +4,12 @@
 
 ### Breaking changes
 
-No exported type signature has changed. The following behavior changes
-can break existing callers:
+* `RpcMap`, exported from `Simple.RPC.Server`, is a `Data.Map.Strict.Map`
+  instead of a `Data.HashMap.Strict.HashMap`. Code that builds it with
+  `createRpcMap` does not change; code that uses `HashMap` functions on it
+  must use the `Map` functions.
+
+The following behavior changes can break existing callers:
 
 * Errors are raised as an `RpcException` instead of an `ErrorCall`: an
   unknown endpoint (`EndpointNotFound`), an invalid server input

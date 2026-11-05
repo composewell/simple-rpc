@@ -75,7 +75,7 @@ import qualified Data.Aeson as Json
 import qualified Data.Aeson.Key as Key
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Bifunctor
-import qualified Data.HashMap.Strict as HM
+import qualified Data.Map.Strict as Map
 import qualified Streamly.Data.Array as Array
 import qualified Streamly.Data.Stream as Stream
 import qualified Streamly.External.ByteString as StreamlyBS
@@ -328,11 +328,10 @@ rpcServiceFunction = eval . evaluator
 rpcCallUsing :: RpcSymbol ir typ -> Runner ir -> typ
 rpcCallUsing = call
 
--- XXX Map instead of HashMap?
 -- XXX rename to ServiceMap
 
 -- | A map of endpoint names and the corresponding server side wrappers.
-type RpcMap ir = HM.HashMap String (ir -> IO ir)
+type RpcMap ir = Map.Map String (ir -> IO ir)
 
 -- XXX serviceMapFromList
 
@@ -340,13 +339,13 @@ type RpcMap ir = HM.HashMap String (ir -> IO ir)
 -- the wrapper of an t'RpcSymbol'. If two wrappers have the same endpoint name,
 -- the map has the one later in the list.
 createRpcMap :: [RpcEval ir] -> RpcMap ir
-createRpcMap = HM.fromList . map (\x -> (symbol x, eval x))
+createRpcMap = Map.fromList . map (\x -> (symbol x, eval x))
 
 -- XXX lookupService
 
 -- | Lookup a symbol in a map.
 lookupRpcSymbol :: String -> RpcMap ir -> Maybe (ir -> IO ir)
-lookupRpcSymbol = HM.lookup
+lookupRpcSymbol = Map.lookup
 
 -------------------------------------------------------------------------------
 -- Pretty printing
