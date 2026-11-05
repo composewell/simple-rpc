@@ -39,12 +39,12 @@ import Data.Function ((&))
 import Data.Word (Word8)
 import Streamly.Data.Array (Array)
 import Streamly.Unicode.String (str)
-import System.FilePath (takeDirectory)
 
 import qualified Data.IORef as IORef
 import qualified Streamly.Internal.Data.Array as Array (compactEndByLn_)
 import qualified Streamly.Data.Fold as Fold
 import qualified Streamly.Data.Stream as Stream
+import qualified Streamly.FileSystem.Path as Path
 import qualified Streamly.System.Process as Proc
 import qualified Streamly.Unicode.Stream as Unicode
 
@@ -290,8 +290,10 @@ run = direct
 -- run on the local host. Not supported on a Windows client or a Windows
 -- remote host.
 --
--- Raise a 'VersionMismatch' exception if the local executable prints a
--- version other than 'executableVersion', and a
+-- Raise an @InvalidPath@ exception, of type @PathException@ from
+-- streamly-core, if @remotePath@ is empty or has a NUL character, a
+-- 'VersionMismatch' exception if the local executable prints a version
+-- other than 'executableVersion', and a
 -- 'Streamly.Internal.System.Process.ProcessFailure' exception if a command
 -- fails.
 --
@@ -301,7 +303,8 @@ run = direct
 installOnRemote :: Executable -> (String, String) -> FilePath -> IO ()
 installOnRemote localExe sshConf@(addr, port) remoteExePath = do
     let exePath = executablePath localExe
-        remoteExeDir = takeDirectory remoteExePath
+    remotePath <- Path.fromString remoteExePath
+    let remoteExeDir = maybe "." Path.toString (Path.takeDirectory remotePath)
     versionGuard putStrLn Nothing localExe
     tmpOut <- uncurry Proc.toString $ sshCommand sshConf ("mktemp", [])
     let tmp = takeWhile (/= '\n') tmpOut
